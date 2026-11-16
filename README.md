@@ -40,7 +40,7 @@ Claude estimates the scale from printed dimensions or from door and furniture si
 
 ## Putting it on a website
 
-Copy `index.html` to any static host. It loads XState 5.33.3 from jsDelivr (unpkg if that fails), three.js r128 from cdnjs and two fonts from Google Fonts. On Apple devices the text uses the system font. The first time someone uploads a PDF it also loads pdf.js 3.11.174 from cdnjs. Uploaded files are read in the browser and are not sent anywhere, except to Claude when "Read it with Claude" is pressed.
+Copy `index.html` to any static host. It loads XState 5.33.3 from jsDelivr (unpkg if that fails), three.js r128 from cdnjs, and Archivo and JetBrains Mono from Google Fonts. The first time someone uploads a PDF it also loads pdf.js 3.11.174 from cdnjs. Uploaded files are read in the browser and are not sent anywhere, except to Claude when "Read it with Claude" is pressed.
 
 To put it inside an existing app, load `index.html` in an iframe, or copy the contents of `app.html` into a page of the app. The current plan is saved in the browser's local storage under `roomlines.plan`.
 
@@ -87,6 +87,7 @@ The drawing fills the window. Everything you operate floats above it as glass: t
 
 | Part | How it is built |
 |---|---|
+| Brand | The colours and type of likuloka.com: cobalt `#1428a0` on white paper, Archivo for text and JetBrains Mono for figures. The Liku Loka logo sits in the title bar as a mask, so it takes the theme's cobalt. The site itself is light only; the dark theme here is a cobalt blueprint. |
 | Glass | A translucent tint, a bright rim drawn as a gradient border, and `backdrop-filter` blur and saturation. The tools panel uses a thicker tint because it holds text. |
 | Rim refraction | The two bars bend the picture behind their edges with an SVG displacement filter. Only Chromium browsers draw this. Every other browser shows the same glass without the bend. |
 | Fallbacks | With "reduce transparency" or "increase contrast" turned on, and in browsers without `backdrop-filter`, glass becomes an opaque surface. |

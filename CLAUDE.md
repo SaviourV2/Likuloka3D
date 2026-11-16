@@ -15,6 +15,7 @@ Roomlines, a floor plan editor with a 3D view. `README.md` documents the plan fo
 - Flows with ordered steps or interruptible work are XState machines in the "state machines" section of `app.html`. Add a state or a machine for new behaviour of that kind; do not add a boolean flag. Plain settings stay in `state`.
 - Change rooms through `addRoom`, `updateRoom` and `removeRoom`. They validate input and are what `window.roomlines` exposes.
 - To check behaviour in a browser, read `roomlines.getState()` or the `data-tool`, `data-drawing`, `data-describe` and `data-read` attributes on `.wrap` instead of inferring state from the DOM.
+- The look follows likuloka.com: cobalt `--accent`, Archivo, JetBrains Mono for figures. Errors and destructive actions use `--crit`, never the accent. Only colours, fonts and the logo may come from the private `likuloka-web` repository; this repository is public.
 - Glass (`.glass`) is for controls that float above the drawing. Never put it on the plan, the 3D view or anything inside the tools panel; controls inside glass use the `--field` fills instead.
 - Never put `view-transition-name`, `filter`, `opacity`, `mask` or `mix-blend-mode` on a parent of a glass element. Any of them stops the glass from seeing the drawing behind it, so the blur silently does nothing. Put them on the glass element itself.
 - Nothing floating may cover a room, a handle or the uploaded drawing. The tests check this at 1400×900 and 400×800.
