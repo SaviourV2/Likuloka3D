@@ -277,7 +277,14 @@ function fakeClaude() {
     await page.click('#panelBtn'); await page.waitForTimeout(700);
     check('Tools closes the panel with the hidden attribute', await page.locator('#panel').isHidden() && await page.evaluate(() => window.roomlines.getState().view.panel) === 'closed' && await page.getAttribute('#panelBtn', 'aria-expanded') === 'false');
     check('the panel can be reopened by script', await page.evaluate(() => window.roomlines.setView({ panel: 'open' }).panel) === 'open' && await page.locator('#panel').isVisible());
+    await page.click('label:has(#optFurniture)'); await page.click('label:has(#optCut)'); await page.click('#resetView'); await page.click('#zoomBtn');
+    const v = await page.evaluate(() => window.roomlines.getState().view);
+    check('the Furniture, Cut walls, Reset view and zoom controls all respond', v.furniture === false && v.cut === false && v.zoomHome === true && await page.textContent('#zoomBtn') === 'Show the whole drawing', v);
     const glass = await page.evaluate(() => { const c = getComputedStyle(document.querySelector('#panel')); return c.backdropFilter || c.webkitBackdropFilter; });
+    const bar = await page.evaluate(() => { const c = getComputedStyle(document.querySelector('#viewBar')); return c.backdropFilter || c.webkitBackdropFilter; });
+    check('the bars are glass too', /blur\(|url\(/.test(bar), bar);
+    const cut = await page.evaluate(() => [...document.querySelectorAll('.glass')].flatMap(g => { const bad = []; for (let e = g.parentElement; e && e !== document.documentElement; e = e.parentElement) { const c = getComputedStyle(e); if (c.viewTransitionName !== 'none' || c.filter !== 'none' || c.opacity !== '1' || c.mixBlendMode !== 'normal' || (c.maskImage && c.maskImage !== 'none')) bad.push(`${g.id || g.className} inside ${e.id || e.className}`); } return bad; }).filter(x => !/^(hint|btn zoom).* inside pane/.test(x) && !/hint3d inside|zoomBtn inside/.test(x)));
+    check('no parent cuts a floating bar or the panel off from the drawing behind it', cut.length === 0, cut);
     check('the panel is glass: it blurs what is behind it', /blur\(/.test(glass), glass);
     check('no page errors with the floating controls', errors.length === 0, errors);
     await close();

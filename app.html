@@ -21,7 +21,8 @@
   --rim-hi: rgba(255, 255, 255, .95);
   --rim-lo: rgba(255, 255, 255, .30);
   --glass-shadow: 0 12px 36px rgba(18, 32, 46, .17), 0 2px 6px rgba(18, 32, 46, .09);
-  --backdrop: blur(22px) saturate(180%);
+  --backdrop-tone: saturate(180%);
+  --backdrop: blur(22px) var(--backdrop-tone);
   --solid: #f3f6f9;
   --field: rgba(18, 32, 46, .065);
   --field-strong: rgba(18, 32, 46, .12);
@@ -41,7 +42,7 @@
     --paper: #0b1520; --ink: #e8f0f7; --muted: #a3b6c7; --accent: #ff8a4c; --accent-ink: #1c0d04;
     --plan-bg: #0f2740; --grid: #1b3a58; --wall: #d5e5f4; --sky-a: #1b2e41; --sky-b: #0c1722; --scene-ground: #1a2d3f;
     --glass: rgba(24, 36, 50, .54); --glass-thick: rgba(18, 28, 40, .78); --rim-hi: rgba(255, 255, 255, .32); --rim-lo: rgba(255, 255, 255, .07);
-    --glass-shadow: 0 14px 40px rgba(0, 0, 0, .45), 0 2px 6px rgba(0, 0, 0, .3); --backdrop: blur(24px) saturate(170%) brightness(.72);
+    --glass-shadow: 0 14px 40px rgba(0, 0, 0, .45), 0 2px 6px rgba(0, 0, 0, .3); --backdrop-tone: saturate(170%) brightness(.72); --backdrop: blur(24px) var(--backdrop-tone);
     --solid: #15222e; --field: rgba(255, 255, 255, .08); --field-strong: rgba(255, 255, 255, .15); --hair: rgba(255, 255, 255, .13); --thumb: rgba(255, 255, 255, .22);
     color-scheme: dark;
   }
@@ -50,7 +51,7 @@
   --paper: #0b1520; --ink: #e8f0f7; --muted: #a3b6c7; --accent: #ff8a4c; --accent-ink: #1c0d04;
   --plan-bg: #0f2740; --grid: #1b3a58; --wall: #d5e5f4; --sky-a: #1b2e41; --sky-b: #0c1722; --scene-ground: #1a2d3f;
   --glass: rgba(24, 36, 50, .54); --glass-thick: rgba(18, 28, 40, .78); --rim-hi: rgba(255, 255, 255, .32); --rim-lo: rgba(255, 255, 255, .07);
-  --glass-shadow: 0 14px 40px rgba(0, 0, 0, .45), 0 2px 6px rgba(0, 0, 0, .3); --backdrop: blur(24px) saturate(170%) brightness(.72);
+  --glass-shadow: 0 14px 40px rgba(0, 0, 0, .45), 0 2px 6px rgba(0, 0, 0, .3); --backdrop-tone: saturate(170%) brightness(.72); --backdrop: blur(24px) var(--backdrop-tone);
   --solid: #15222e; --field: rgba(255, 255, 255, .08); --field-strong: rgba(255, 255, 255, .15); --hair: rgba(255, 255, 255, .13); --thumb: rgba(255, 255, 255, .22);
   color-scheme: dark;
 }
@@ -94,7 +95,10 @@ body { background: var(--paper); color: var(--ink); font-family: var(--font-body
   .glass { --glass: var(--solid); --glass-thick: var(--solid); -webkit-backdrop-filter: none !important; backdrop-filter: none !important; border-color: var(--field-strong); }
 }
 
-.bars { position: absolute; z-index: 5; top: 12px; left: var(--gl); right: var(--gr); display: flex; flex-wrap: wrap; gap: 10px; justify-content: space-between; pointer-events: none; view-transition-name: bars; }
+.bars { position: absolute; z-index: 5; top: 12px; left: var(--gl); right: var(--gr); display: flex; flex-wrap: wrap; gap: 10px; justify-content: space-between; pointer-events: none; }
+/* A transition name on a parent would cut its glass children off from what is behind them, so each bar carries its own. */
+#titleBar { view-transition-name: title-bar; }
+#viewBar { view-transition-name: view-bar; }
 .bar { pointer-events: auto; min-width: 0; height: 48px; border-radius: 24px; padding: 0 7px 0 18px; display: flex; align-items: center; gap: 10px; }
 #viewBar { padding-left: 7px; }
 .mark { font: 700 17px var(--font-display); letter-spacing: -0.02em; margin: 0; white-space: nowrap; }
@@ -120,6 +124,7 @@ body { background: var(--paper); color: var(--ink); font-family: var(--font-body
 .btn.primary:hover { background: var(--accent); filter: brightness(1.08); }
 .btn.danger { color: var(--accent); }
 .btn:disabled { opacity: .5; cursor: default; transform: none; }
+.btn.glass, .btn.glass:hover { border: 1px solid transparent; background: linear-gradient(var(--glass), var(--glass)) padding-box, linear-gradient(135deg, var(--rim-hi), var(--rim-lo) 36%, var(--rim-lo) 64%, var(--rim-hi)) border-box; }
 button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 .hint { position: absolute; left: var(--gl); bottom: 14px; margin: 0; font: 500 11px var(--font-body); color: var(--muted); pointer-events: none; padding: 6px 11px; border-radius: 999px; }
@@ -180,11 +185,13 @@ details .inner { display: flex; flex-direction: column; gap: 10px; }
 body[data-panel="open"] .panes.mode-plan .pane-plan { padding-right: calc(var(--panel-w) + 28px); }
 body[data-panel="open"] .panes.mode-plan .zoom { right: calc(var(--panel-w) + 40px); }
 
-@media (max-width: 1120px) { .stats { display: none; } }
-@media (max-width: 860px) {
+@media (max-width: 1179px) {
+  .stats, .seg .both { display: none; }
   .panes.mode-both { grid-template-columns: minmax(0, 1fr); }
   .panes.mode-both .pane-plan { display: none; }
-  .seg .both, #panelBtn { display: none; }
+}
+@media (max-width: 860px) {
+  #panelBtn { display: none; }
   .bars { top: 8px; gap: 8px; }
   .bar { height: 44px; flex: 1 1 100%; gap: 6px; }
   .seg button, .check, .bar .btn { font-size: 12px; padding: 7px 11px; }
@@ -686,7 +693,7 @@ function furnish(plan, an) {
 
 /* ---------- state ---------- */
 const state = { plan: null, sel: null, an: null, mode: 'both', furniture: true, cut: true, zoomHome: false, panel: 'open' };
-const phone = window.matchMedia('(max-width: 860px)'), calm = window.matchMedia('(prefers-reduced-motion: reduce)');
+const phone = window.matchMedia('(max-width: 860px)'), narrow = window.matchMedia('(max-width: 1179px)'), calm = window.matchMedia('(prefers-reduced-motion: reduce)');
 let booted = false; // nothing animates while the first frame is being put together
 const store = { get() { try { return JSON.parse(localStorage.getItem('roomlines.plan') || 'null'); } catch (e) { return null; } }, set(v) { try { localStorage.setItem('roomlines.plan', JSON.stringify(v)); } catch (e) {} } };
 const selected = () => state.plan.rooms.find(r => r.id === state.sel) || null;
@@ -880,7 +887,7 @@ function moveThumb() {
   t.style.opacity = '1'; t.style.width = b.offsetWidth + 'px'; t.style.transform = `translateX(${b.offsetLeft}px)`;
 }
 function setMode(m) {
-  if (m === 'both' && phone.matches) m = '3d';
+  if (m === 'both' && narrow.matches) m = '3d'; // side by side needs a wide window
   state.mode = m;
   document.querySelectorAll('.seg button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.mode === m)));
   moveThumb();
@@ -931,7 +938,8 @@ $('#panelBtn').addEventListener('click', () => morph(() => setPanel(state.panel 
 }
 if (typeof ResizeObserver !== 'undefined') new ResizeObserver(() => layoutPanel()).observe(barsEl);
 window.addEventListener('resize', () => layoutPanel());
-phone.addEventListener('change', () => { if (phone.matches && state.mode === 'both') setMode('3d'); setPanel(phone.matches ? 'closed' : 'open'); });
+phone.addEventListener('change', () => setPanel(phone.matches ? 'closed' : 'open'));
+narrow.addEventListener('change', () => { if (narrow.matches && state.mode === 'both') setMode('3d'); });
 
 // Refraction at the rim of the bars. Only Chromium draws an SVG filter inside backdrop-filter, so every other browser keeps the plain glass.
 function refract(el) {
@@ -944,7 +952,7 @@ function refract(el) {
   f.id = id; f.setAttribute('color-interpolation-filters', 'sRGB'); f.setAttribute('x', '0'); f.setAttribute('y', '0'); f.setAttribute('width', '100%'); f.setAttribute('height', '100%');
   img.setAttribute('result', 'map'); img.setAttribute('x', '0'); img.setAttribute('y', '0'); img.setAttribute('preserveAspectRatio', 'none');
   dm.setAttribute('in', 'SourceGraphic'); dm.setAttribute('in2', 'map'); dm.setAttribute('scale', '26'); dm.setAttribute('xChannelSelector', 'R'); dm.setAttribute('yChannelSelector', 'G'); dm.setAttribute('result', 'bent');
-  bl.setAttribute('in', 'bent'); bl.setAttribute('stdDeviation', '5');
+  bl.setAttribute('in', 'bent'); bl.setAttribute('stdDeviation', '11');
   f.append(img, dm, bl); host.appendChild(f);
   const draw = () => {
     const w = el.offsetWidth, h = el.offsetHeight; if (!w || !h) return;
@@ -964,7 +972,7 @@ function refract(el) {
     }
     g.putImageData(d, 0, 0);
     img.setAttribute('href', c.toDataURL()); img.setAttribute('width', w); img.setAttribute('height', h);
-    el.style.backdropFilter = `url(#${id}) saturate(180%)`;
+    el.style.backdropFilter = `url(#${id}) var(--backdrop-tone)`; // the filter bends and blurs; the theme still sets the tone
   };
   draw(); if (typeof ResizeObserver !== 'undefined') new ResizeObserver(draw).observe(el);
 }
@@ -1626,11 +1634,11 @@ window.roomlines = api;
 let first = null;
 try { const saved = store.get(); if (saved) first = normalizePlan(saved); } catch (e) { first = null; }
 state.panel = phone.matches ? 'closed' : 'open'; layoutPanel();
-setMode(phone.matches ? '3d' : 'both');
+setMode(narrow.matches ? '3d' : 'both');
 measure();
 setPlan(first || normalizePlan(PRESETS[2]));
-refract($('#titleBar')); refract($('#viewBar'));
 if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { layoutPanel(); });
+refract($('#titleBar')); refract($('#viewBar'));
 booted = true;
 window.__roomlines = { state, under, analyze, furnish, normalizePlan, setPlan, applyReading, handleFile, PRESETS }; // internals, for the tests only
 })();

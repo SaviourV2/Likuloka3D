@@ -16,6 +16,7 @@ Roomlines, a floor plan editor with a 3D view. `README.md` documents the plan fo
 - Change rooms through `addRoom`, `updateRoom` and `removeRoom`. They validate input and are what `window.roomlines` exposes.
 - To check behaviour in a browser, read `roomlines.getState()` or the `data-tool`, `data-drawing`, `data-describe` and `data-read` attributes on `.wrap` instead of inferring state from the DOM.
 - Glass (`.glass`) is for controls that float above the drawing. Never put it on the plan, the 3D view or anything inside the tools panel; controls inside glass use the `--field` fills instead.
+- Never put `view-transition-name`, `filter`, `opacity`, `mask` or `mix-blend-mode` on a parent of a glass element. Any of them stops the glass from seeing the drawing behind it, so the blur silently does nothing. Put them on the glass element itself.
 - Nothing floating may cover a room, a handle or the uploaded drawing. The tests check this at 1400×900 and 400×800.
 - Animate discrete changes only, through `morph()` or CSS, and never during a drag. Everything must still work with reduced motion, where changes apply at once.
 - Visibility is the `hidden` attribute. Animate how something enters; never hide it with opacity alone, because the tests and assistive tools read `hidden`.
