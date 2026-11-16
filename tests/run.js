@@ -125,9 +125,11 @@ function fakeClaude() {
     check('every built-in layout gets doors, one front door and furniture inside the walls', sane.every(s => s.doors && s.entry && s.furniture && s.inside), sane);
 
     await page.click('[data-preset="2"]'); await page.waitForTimeout(300);
-    const c = await page.locator('#view3d').boundingBox();
-    await page.mouse.move(c.x + c.width / 2, c.y + c.height / 2); await page.mouse.down(); await page.mouse.move(c.x + c.width / 2 + 120, c.y + c.height / 2 - 40, { steps: 5 }); await page.mouse.up();
-    await page.mouse.wheel(0, -300); await page.waitForTimeout(200); await page.mouse.click(c.x + c.width / 2, c.y + c.height / 2);
+    // the model sits in the middle of the part of the 3D view that no control floats over
+    const c = await page.evaluate(() => { const v = document.querySelector('#view3d').getBoundingClientRect(), p = document.querySelector('#panel').getBoundingClientRect(), b = document.querySelector('#bars').getBoundingClientRect(); return { x: (v.left + Math.min(v.right, p.left)) / 2, y: (Math.max(v.top, b.bottom) + v.bottom) / 2 }; });
+    await page.waitForTimeout(900);
+    await page.mouse.move(c.x, c.y); await page.mouse.down(); await page.mouse.move(c.x + 60, c.y - 20, { steps: 5 }); await page.mouse.up();
+    await page.mouse.wheel(0, -200); await page.waitForTimeout(200); await page.mouse.click(c.x, c.y);
     check('clicking a floor in 3D selects that room', !!(await page.evaluate(() => window.roomlines.getState().selection)));
     check('no page errors while editing', errors.length === 0, errors);
     await close();
@@ -254,6 +256,56 @@ function fakeClaude() {
     const { page, errors, close } = await open({ block: ['jsdelivr'] });
     check('the second script host is used when the first is down', (await machines(page)).tool === 'idle' && errors.length === 0, errors);
     await close();
+  }
+
+  // ---------- 6. floating glass controls
+  const clear = page => page.evaluate(() => {
+    const hit = (a, b) => a.left < b.right - 1 && a.right > b.left + 1 && a.top < b.bottom - 1 && a.bottom > b.top + 1;
+    const glass = [...document.querySelectorAll('.bar, #panel')].filter(e => !e.hidden && e.offsetWidth).map(e => e.getBoundingClientRect());
+    const content = [...document.querySelectorAll('[data-room], [data-handle]')].map(e => e.getBoundingClientRect()); const img = document.querySelector('#ulImg');
+    if (img.getAttribute('display') !== 'none') content.push(img.getBoundingClientRect());
+    return content.filter(c => c.width && glass.some(g => hit(c, g))).length;
+  });
+  {
+    const { page, errors, close } = await open();
+    check('the tools panel starts open on a wide screen', await page.evaluate(() => document.body.dataset.panel) === 'open' && await page.locator('#panel').isVisible());
+    await page.setInputFiles('#fileIn', F.png); await until(page, 'drawing', 'ready'); await page.waitForTimeout(500);
+    check('no glass covers a room, a handle or the uploaded drawing (plan + 3D)', await clear(page) === 0, await clear(page));
+    await page.click('[data-mode="plan"]'); await page.waitForTimeout(900);
+    check('the view switch changes the layout', await page.evaluate(() => document.querySelector('#panes').className) === 'panes mode-plan' && await page.locator('.pane-3d').isHidden());
+    check('no glass covers the plan when it fills the window', await clear(page) === 0, await clear(page));
+    await page.click('#panelBtn'); await page.waitForTimeout(700);
+    check('Tools closes the panel with the hidden attribute', await page.locator('#panel').isHidden() && await page.evaluate(() => window.roomlines.getState().view.panel) === 'closed' && await page.getAttribute('#panelBtn', 'aria-expanded') === 'false');
+    check('the panel can be reopened by script', await page.evaluate(() => window.roomlines.setView({ panel: 'open' }).panel) === 'open' && await page.locator('#panel').isVisible());
+    const glass = await page.evaluate(() => { const c = getComputedStyle(document.querySelector('#panel')); return c.backdropFilter || c.webkitBackdropFilter; });
+    check('the panel is glass: it blurs what is behind it', /blur\(/.test(glass), glass);
+    check('no page errors with the floating controls', errors.length === 0, errors);
+    await close();
+  }
+  {
+    const { page, errors, close } = await open({ viewport: { width: 400, height: 800 } });
+    const h = () => page.evaluate(() => Math.round(document.querySelector('#panel').getBoundingClientRect().height));
+    check('on a phone the tools start as a closed sheet', await page.evaluate(() => document.body.dataset.panel) === 'closed' && await page.locator('#panelBody').isHidden() && await h() < 80, await h());
+    await page.setInputFiles('#fileIn', F.png); await until(page, 'drawing', 'ready'); await page.waitForTimeout(700);
+    check('on a phone no glass covers a room or the drawing', await clear(page) === 0, await clear(page));
+    await page.click('#grab'); await page.waitForTimeout(700);
+    const half = await h();
+    check('tapping the handle opens the sheet to about half', await page.evaluate(() => document.body.dataset.panel) === 'open' && await page.locator('#panelBody').isVisible() && half > 300 && half < 440, half);
+    await page.click('#grab'); await page.waitForTimeout(700);
+    check('tapping again opens it fully, and once more closes it', await page.evaluate(() => document.body.dataset.panel) === 'full' && await h() > 560, await h());
+    await page.click('#grab'); await page.waitForTimeout(700);
+    check('the sheet closes again', await page.evaluate(() => document.body.dataset.panel) === 'closed' && await h() < 80 && errors.length === 0, [await h(), errors]);
+    await close();
+  }
+  {
+    const ctx = await browser.newContext({ viewport: { width: 1400, height: 900 }, reducedMotion: 'reduce' }), page = await ctx.newPage(), errors = [];
+    page.on('pageerror', e => errors.push(e.message));
+    await page.route('**/*', r => { const u = r.request().url(); if (u.startsWith('file:')) return r.continue(); const hit = SCRIPTS.find(([f]) => u.endsWith(f)); return hit ? r.fulfill({ contentType: 'application/javascript', body: hit[1] }) : r.abort(); });
+    await page.goto(PAGE); await page.waitForTimeout(500);
+    await page.click('[data-mode="3d"]');
+    const still = await page.evaluate(() => ({ now: document.querySelector('#panes').className, anim: getComputedStyle(document.querySelector('.side')).animationName, thumb: getComputedStyle(document.querySelector('#segThumb')).transitionDuration }));
+    check('with reduced motion, changes apply at once and nothing animates', still.now === 'panes mode-3d' && still.anim === 'none' && /^0s/.test(still.thumb) && errors.length === 0, still);
+    await ctx.close();
   }
 
   await browser.close();

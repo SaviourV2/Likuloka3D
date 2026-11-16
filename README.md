@@ -40,7 +40,7 @@ Claude estimates the scale from printed dimensions or from door and furniture si
 
 ## Putting it on a website
 
-Copy `index.html` to any static host. It loads XState 5.33.3 from jsDelivr (unpkg if that fails), three.js r128 from cdnjs and three fonts from Google Fonts. The first time someone uploads a PDF it also loads pdf.js 3.11.174 from cdnjs. Uploaded files are read in the browser and are not sent anywhere, except to Claude when "Read it with Claude" is pressed.
+Copy `index.html` to any static host. It loads XState 5.33.3 from jsDelivr (unpkg if that fails), three.js r128 from cdnjs and two fonts from Google Fonts. On Apple devices the text uses the system font. The first time someone uploads a PDF it also loads pdf.js 3.11.174 from cdnjs. Uploaded files are read in the browser and are not sent anywhere, except to Claude when "Read it with Claude" is pressed.
 
 To put it inside an existing app, load `index.html` in an iframe, or copy the contents of `app.html` into a page of the app. The current plan is saved in the browser's local storage under `roomlines.plan`.
 
@@ -81,6 +81,25 @@ The box also accepts a nested layout, which cannot produce gaps or overlaps:
 
 Opened as a Claude artifact, the page shows a "Describe a home" box. It sends the description to Claude, which answers with a nested layout, and the page draws it. This box and "Read it with Claude" are hidden everywhere else, because a page on another host has no Claude to call. Uploading, the scale tool and tracing by hand work on any host. To get a drawn layout there, ask Claude in a chat for a plan in the nested layout format and paste the answer into "Plan data".
 
+## Design
+
+The drawing fills the window. Everything you operate floats above it as glass: the title bar, the view bar, the tools panel and two small pills. This follows Apple's Liquid Glass rule that glass is a layer for controls and navigation above the content, and is not used on the content itself. The plan, the room labels and the 3D model are content, so they are never glass.
+
+| Part | How it is built |
+|---|---|
+| Glass | A translucent tint, a bright rim drawn as a gradient border, and `backdrop-filter` blur and saturation. The tools panel uses a thicker tint because it holds text. |
+| Rim refraction | The two bars bend the picture behind their edges with an SVG displacement filter. Only Chromium browsers draw this. Every other browser shows the same glass without the bend. |
+| Fallbacks | With "reduce transparency" or "increase contrast" turned on, and in browsers without `backdrop-filter`, glass becomes an opaque surface. |
+| Tools panel | An inspector on the right on wide screens, closed with the "Tools" button. Below 860 px it is a sheet at the bottom with three heights; tap or swipe its handle. |
+| Staying clear | The plan is padded so that no control covers a room. The 3D view runs underneath the panel, and the camera shifts the model into the space that is left. |
+
+Motion is tied to discrete changes and never runs during a drag:
+
+- Switching the view, loading a built-in layout and opening or closing the panel morph with the View Transitions API where the browser has it.
+- The camera glides when the model is reframed, until you orbit or zoom yourself.
+- The view switch has a sliding thumb, new rooms pop in, and panel sections rise as they appear.
+- With "reduce motion" turned on, all of it is off and changes apply at once.
+
 ## State machines
 
 Four flows in the page have more than two steps. Each one is an [XState](https://github.com/statelyai/xstate) v5 machine, defined in the "state machines" section of `app.html`. A machine only records which step its flow is in. The plan itself stays in `state.plan`.
@@ -118,7 +137,7 @@ stateDiagram-v2
 
 The current state of each machine is written on the page's outer `.wrap` element as `data-tool`, `data-drawing`, `data-describe` and `data-read`. CSS and tests can select on those, for example `.wrap[data-tool^="scaling"]`.
 
-Simple on/off settings (furniture, cut walls, view mode, the selected room) are plain values in `state`. They have no steps to get wrong, so a machine would add code and remove nothing.
+Simple settings (furniture, cut walls, view mode, the selected room, the tools panel being `open`, `closed` or `full`) are plain values in `state`. The panel's value is also on `body` as `data-panel`. They have no steps to get wrong, so a machine would add code and remove nothing.
 
 When a new flow has steps that must happen in order, or work that can be interrupted, add it as a machine. Do not add a flag.
 
@@ -135,7 +154,7 @@ const id = roomlines.addRoom({ name: 'Office', type: 'office', x: 5, y: 0, w: 3,
 roomlines.updateRoom(id, { w: 4 })       // values snap to the 0.25 m grid
 roomlines.removeRoom(id)
 roomlines.select(id)
-roomlines.setView({ mode: '3d', furniture: false, cut: true })
+roomlines.setView({ mode: '3d', furniture: false, cut: true, panel: 'closed' })
 
 roomlines.can('tool', 'SCALE.START')     // false until a drawing is loaded
 roomlines.send('drawing', 'PAGE.NEXT')   // returns the machine's new state
@@ -147,7 +166,7 @@ roomlines.debug = true                   // print each transition to the console
 
 ## Tests
 
-`tests/run.js` opens `index.html` in headless Chromium and checks editing, uploads, the scale tool, both Claude flows against a stand-in, the scripting API, the phone layout and a failed script download. It needs Playwright with Chromium available to Node.
+`tests/run.js` opens `index.html` in headless Chromium and checks editing, uploads, the scale tool, both Claude flows against a stand-in, the scripting API, the floating controls, the phone sheet, reduced motion and a failed script download. It needs Playwright with Chromium available to Node.
 
 ```bash
 cd tests && npm install && npm test
