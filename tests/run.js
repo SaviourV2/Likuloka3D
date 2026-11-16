@@ -10,6 +10,7 @@ const lib = f => fs.readFileSync(path.join(__dirname, 'node_modules', f), 'utf8'
 const SCRIPTS = [
   ['xstate.umd.min.js', lib('xstate/dist/xstate.umd.min.js')],
   ['three.min.js', lib('three/build/three.min.js')],
+  ['GLTFLoader.js', lib('three/examples/js/loaders/GLTFLoader.js')],
   ['pdf.min.js', lib('pdfjs-dist/build/pdf.min.js')],
   ['pdf.worker.min.js', lib('pdfjs-dist/build/pdf.worker.min.js')],
 ];
@@ -62,9 +63,10 @@ function fakeClaude() {
     page.on('pageerror', e => errors.push(e.message));
     await page.route('**/*', r => {
       const u = r.request().url();
+      if (block.some(b => u.includes(b))) return r.abort();
       if (u.startsWith('file:')) return r.continue();
       const hit = SCRIPTS.find(([f]) => u.endsWith(f));
-      return hit && !block.some(b => u.includes(b)) ? r.fulfill({ contentType: 'application/javascript', body: hit[1] }) : r.abort();
+      return hit ? r.fulfill({ contentType: 'application/javascript', body: hit[1] }) : r.abort();
     });
     if (claude) await page.addInitScript(fakeClaude);
     await page.goto(PAGE); await page.waitForTimeout(600);
@@ -79,8 +81,10 @@ function fakeClaude() {
   // ---------- 1. editing the plan (no Claude, as on any website)
   {
     const { page, errors, close } = await open();
-    check('starts with every machine at rest', JSON.stringify(await machines(page)) === JSON.stringify({ tool: 'idle', drawing: 'empty', describe: 'unavailable', read: 'unavailable' }), await machines(page));
-    check('machine states are mirrored on the page', JSON.stringify(await attrs(page)) === JSON.stringify({ tool: 'idle', drawing: 'empty', describe: 'unavailable', read: 'unavailable' }), await attrs(page));
+    await until(page, 'models', 'ready');
+    const REST = JSON.stringify({ tool: 'idle', drawing: 'empty', describe: 'unavailable', read: 'unavailable', models: 'ready' });
+    check('starts with every machine at rest', JSON.stringify(await machines(page)) === REST, await machines(page));
+    check('machine states are mirrored on the page', JSON.stringify(await attrs(page)) === REST, await attrs(page));
     check('Claude cards are hidden without Claude', await page.locator('#askCard').isHidden() && await page.locator('#readBox').isHidden());
 
     const box = await page.locator('[data-room]').nth(5).boundingBox(), ppm = box.width / 3.25;
@@ -121,7 +125,7 @@ function fakeClaude() {
     await page.fill('#jsonBox', '{oops'); await page.click('#jsonLoad');
     check('bad JSON is explained', /not valid JSON/.test(await page.textContent('#jsonStatus')));
 
-    const sane = await page.evaluate(() => { const R = window.__roomlines; return R.PRESETS.map(p => { const plan = R.normalizePlan(p), an = R.analyze(plan), f = R.furnish(plan, an), ops = an.pieces.flatMap(x => x.openings.map(o => o.kind)); const b = { x: Math.max(...plan.rooms.map(r => r.x + r.w)), y: Math.max(...plan.rooms.map(r => r.y + r.h)) }; return { doors: ops.filter(o => o === 'door' || o === 'open').length >= plan.rooms.length - 1, entry: ops.filter(o => o === 'entry').length === 1, furniture: f.length > 20, inside: f.every(q => q.x0 >= -0.01 && q.y0 >= -0.01 && q.x1 <= b.x + 0.01 && q.y1 <= b.y + 0.01) }; }); });
+    const sane = await page.evaluate(() => { const R = window.__roomlines; return R.PRESETS.map(p => { const plan = R.normalizePlan(p), an = R.analyze(plan), f = R.furnish(plan, an), ops = an.pieces.flatMap(x => x.openings.map(o => o.kind)); const b = { x: Math.max(...plan.rooms.map(r => r.x + r.w)), y: Math.max(...plan.rooms.map(r => r.y + r.h)) }; return { doors: ops.filter(o => o === 'door' || o === 'open').length >= plan.rooms.length - 1, entry: ops.filter(o => o === 'entry').length === 1, furniture: f.length >= plan.rooms.length && f.some(q => q.kind === 'set' && q.models.length && q.alt.length), inside: f.every(q => q.x0 >= -0.01 && q.y0 >= -0.01 && q.x1 <= b.x + 0.01 && q.y1 <= b.y + 0.01) }; }); });
     check('every built-in layout gets doors, one front door and furniture inside the walls', sane.every(s => s.doors && s.entry && s.furniture && s.inside), sane);
 
     await page.click('[data-preset="2"]'); await page.waitForTimeout(300);
@@ -269,6 +273,34 @@ function fakeClaude() {
     check('the editor sets finishes on the selected room', ed.floor === 'terrazzo' && ed.paint === '#cfd8d3' && ed.tile === 'tile-60x120' && ed.tileTo === 0.9 && ed.spec === 'Sample tile 60x120' && await page.getAttribute('#edPaints .swatch[data-paint="#cfd8d3"]', 'aria-pressed') === 'true', ed);
     await page.selectOption('#edTile', 'none');
     check('choosing no tile turns the height off', await page.locator('#edTileTo').isDisabled() && await page.evaluate(() => window.roomlines.getPlan().rooms[3].finish.tile) === '' && errors.length === 0, errors);
+    await close();
+  }
+
+  // ---------- 4c. furniture from model files, with boxes as the fallback
+  {
+    const { page, errors, close } = await open();
+    await until(page, 'models', 'ready'); await page.waitForTimeout(300);
+    const st = await page.evaluate(() => { const R = window.__roomlines, s = R.view.stats(), sets = R.furnish(R.state.plan, R.state.an).filter(q => q.kind === 'set'), names = [...new Set(sets.flatMap(q => q.models.map(m => m.name)))]; return { s, sets: sets.length, names, known: Object.keys(window.ROOMLINES_MODELS), bad: sets.flatMap(q => q.models).filter(m => !(m.w > 0.05 && m.d > 0.01 && m.h > 0.01)).length }; });
+    check('furniture is drawn from model files once they are loaded', st.s.models > 20 && st.sets > 8, st.s);
+    check('every model the layout asks for is in the pack, with a real size', st.names.every(n => st.known.includes(n)) && st.bad === 0, st.names.filter(n => !st.known.includes(n)));
+    const all = await page.evaluate(() => { const R = window.__roomlines, used = new Set(); for (const p of R.PRESETS) { const plan = R.normalizePlan(p); for (const q of R.furnish(plan, R.analyze(plan))) if (q.kind === 'set') q.models.forEach(m => used.add(m.name)); } return { used: [...used], known: Object.keys(window.ROOMLINES_MODELS) }; });
+    check('the built-in layouts only use models that exist', all.used.every(n => all.known.includes(n)) && all.used.length > 20, all.used.filter(n => !all.known.includes(n)));
+    await page.evaluate(() => window.roomlines.setView({ furniture: false })); await page.waitForTimeout(200);
+    const off = await page.evaluate(() => window.__roomlines.view.stats());
+    check('turning furniture off removes the models', off.models === 0 && off.boxes === 0 && errors.length === 0, [off, errors]);
+    await close();
+  }
+  {
+    const { page, errors, close } = await open({ block: ['models.js'] });
+    await until(page, 'models', 'none'); await page.waitForTimeout(300);
+    const st = await page.evaluate(() => window.__roomlines.view.stats());
+    check('without the model pack the furniture falls back to boxes', st.models === 0 && st.boxes > 40 && errors.length === 0, [st, errors]);
+    await close();
+  }
+  {
+    const { page, errors, close } = await open({ block: ['GLTFLoader'] });
+    await until(page, 'models', 'none');
+    check('without the model loader the page still works', (await page.evaluate(() => window.__roomlines.view.stats())).boxes > 40 && errors.length === 0, errors);
     await close();
   }
 

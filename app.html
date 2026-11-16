@@ -346,6 +346,8 @@ body[data-panel="open"] .panes.mode-plan .zoom { right: calc(var(--panel-w) + 40
 <script src="https://cdn.jsdelivr.net/npm/xstate@5.33.3/dist/xstate.umd.min.js"></script>
 <script>window.XState || document.write('<script src="https://unpkg.com/xstate@5.33.3/dist/xstate.umd.min.js"><\/script>');</script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+<script src="models.js"></script>
 <script>
 (() => {
 'use strict';
@@ -619,11 +621,13 @@ function analyze(plan) {
 const C = { wood: 0xb58d62, dark: 0x6a5242, white: 0xf3f1ec, steel: 0xb7bfc7, black: 0x22272c, stone: 0xe4e1da, cab: 0x7f8f8a, ward: 0xd9d2c4, green: 0x5d8f5c, pot: 0x8b8f95, rug: 0xcdbfa8 };
 const SOFT = [0x6f8ba3, 0xb9805f, 0x86a184, 0xa48db5];
 const lighten = (c, k) => { const r = c >> 16 & 255, g = c >> 8 & 255, b = c & 255, m = v => Math.round(v + (255 - v) * k); return m(r) << 16 | m(g) << 8 | m(b); };
+// Parsed furniture models by name: { scene, min, size, centre }. Empty until the models machine has loaded them.
+const modelLib = new Map();
 function frame(r, side) {
-  if (side === 'N') return { len: r.w, depth: r.h, pt: (a, d) => [r.x + a, r.y + d] };
-  if (side === 'S') return { len: r.w, depth: r.h, pt: (a, d) => [r.x + r.w - a, r.y + r.h - d] };
-  if (side === 'W') return { len: r.h, depth: r.w, pt: (a, d) => [r.x + d, r.y + r.h - a] };
-  return { len: r.h, depth: r.w, pt: (a, d) => [r.x + r.w - d, r.y + a] };
+  if (side === 'N') return { side: 'N', len: r.w, depth: r.h, pt: (a, d) => [r.x + a, r.y + d] };
+  if (side === 'S') return { side: 'S', len: r.w, depth: r.h, pt: (a, d) => [r.x + r.w - a, r.y + r.h - d] };
+  if (side === 'W') return { side: 'W', len: r.h, depth: r.w, pt: (a, d) => [r.x + d, r.y + r.h - a] };
+  return { side: 'E', len: r.h, depth: r.w, pt: (a, d) => [r.x + r.w - d, r.y + a] };
 }
 function aabb(fr, a0, a1, d0, d1) { const p = fr.pt(a0, d0), q = fr.pt(a1, d1); return { x0: Math.min(p[0], q[0]), x1: Math.max(p[0], q[0]), y0: Math.min(p[1], q[1]), y1: Math.max(p[1], q[1]) }; }
 const hit = (A, B) => A.x0 < B.x1 - 1e-6 && A.x1 > B.x0 + 1e-6 && A.y0 < B.y1 - 1e-6 && A.y1 > B.y0 + 1e-6;
@@ -640,7 +644,15 @@ function put(ctx, fr, a, d, item) {
     if (item.tall && ctx.an.winZones.some(z => hit(z, box))) return false;
     ctx.placed.push(box);
   }
-  for (const p of item.parts) ctx.parts.push({ ...aabb(fr, a + p[0], a + p[1], d + p[2], d + p[3]), z0: p[4], z1: p[5], color: p[6], kind: p[7] || 'box' });
+  const boxes = item.parts.map(p => ({ ...aabb(fr, a + p[0], a + p[1], d + p[2], d + p[3]), z0: p[4], z1: p[5], color: p[6], kind: p[7] || 'box' }));
+  if (!item.models) { ctx.parts.push(...boxes); return true; }
+  // A piece with model files is one "set": where each model goes, plus the boxes to draw if the models are not available.
+  // Every model in the kit faces +z with its back at the lowest z, so turning it by the wall's side puts its back to the wall.
+  const yaw = { N: 0, S: Math.PI, W: Math.PI / 2, E: -Math.PI / 2 }[fr.side];
+  ctx.parts.push({ kind: 'set', ...aabb(fr, a, a + item.w, d, d + item.dep), alt: boxes, tint: ctx.soft, models: item.models.map(m => {
+    const c = fr.pt(a + (m[1] + m[2]) / 2, d + (m[3] + m[4]) / 2);
+    return { name: m[0], cx: c[0], cz: c[1], w: m[2] - m[1], d: m[4] - m[3], y0: m[5], h: m[6] - m[5], yaw: yaw + (m[7] === 'flip' ? Math.PI : 0) };
+  }) });
   return true;
 }
 function along(ctx, info, item, order = ['center', 'start', 'end'], d = 0) {
@@ -663,20 +675,22 @@ const bedItem = (bw, ns, col) => {
   const n = bw > 1.2 ? 2 : 1;
   for (let i = 0; i < n; i++) { const c = o + bw * (i + 0.5) / n; P.push([c - 0.3, c + 0.3, 0.16, 0.56, 0.5, 0.6, 0xffffff]); }
   if (ns) for (const a0 of [0.03, o + bw + 0.03]) { P.push([a0, a0 + 0.44, 0, 0.4, 0, 0.46, C.wood]); P.push([a0 + 0.13, a0 + 0.31, 0.11, 0.29, 0.46, 0.76, 0xf1e3c4, 'cyl']); }
-  return { w: bw + 2 * o, dep: 2.05, parts: P };
+  const M = [[bw > 1.2 ? 'bedDouble' : 'bedSingle', o, o + bw, 0, 2.05, 0, 0.9]];
+  if (ns) for (const a0 of [0.03, o + bw + 0.03]) M.push(['cabinetBed', a0, a0 + 0.44, 0, 0.4, 0, 0.48], ['lampRoundTable', a0 + 0.11, a0 + 0.33, 0.09, 0.31, 0.48, 0.9]);
+  return { w: bw + 2 * o, dep: 2.05, parts: P, models: M };
 };
 const sofaItem = (w, col) => {
   const P = [[0, w, 0.04, 0.92, 0.08, 0.42, col], [0, w, 0.04, 0.26, 0.42, 0.82, col], [0, 0.16, 0.04, 0.92, 0.42, 0.6, col], [w - 0.16, w, 0.04, 0.92, 0.42, 0.6, col]];
   const n = Math.max(2, Math.round((w - 0.32) / 0.75)), cw = (w - 0.36) / n;
   for (let i = 0; i < n; i++) P.push([0.18 + i * cw + 0.01, 0.18 + (i + 1) * cw - 0.01, 0.28, 0.9, 0.42, 0.5, lighten(col, 0.18)]);
-  return { w, dep: 0.92, parts: P };
+  return { w, dep: 0.92, parts: P, models: [['loungeSofa', 0, w, 0.04, 0.92, 0, 0.86]] };
 };
 const shelfItem = w => {
   const P = [[0, w, 0, 0.03, 0, 1.95, C.wood], [0, 0.03, 0, 0.32, 0, 1.95, C.wood], [w - 0.03, w, 0, 0.32, 0, 1.95, C.wood]];
   [0.02, 0.4, 0.78, 1.16, 1.54, 1.92].forEach((y, i) => { P.push([0.03, w - 0.03, 0.03, 0.32, y, y + 0.03, C.wood]); if (i < 5) P.push([0.07, 0.07 + (w - 0.2) * (0.5 + 0.1 * ((i * 3) % 5)), 0.08, 0.28, y + 0.03, y + 0.29, SOFT[i % 4]]); });
-  return { w, dep: 0.32, tall: true, parts: P };
+  return { w, dep: 0.32, tall: true, parts: P, models: [['bookcaseOpen', 0, w, 0, 0.32, 0, 1.95]] };
 };
-const plantItem = () => ({ w: 0.5, dep: 0.5, parts: [[0.1, 0.4, 0.1, 0.4, 0, 0.36, C.pot, 'cyl'], [0.02, 0.48, 0.02, 0.48, 0.36, 1.05, C.green, 'ball']] });
+const plantItem = () => ({ w: 0.5, dep: 0.5, parts: [[0.1, 0.4, 0.1, 0.4, 0, 0.36, C.pot, 'cyl'], [0.02, 0.48, 0.02, 0.48, 0.36, 1.05, C.green, 'ball']], models: [['pottedPlant', 0.1, 0.4, 0.1, 0.4, 0, 1.05]] });
 const chair = (P, c, d0, backAtStart) => {
   P.push([c - 0.21, c + 0.21, d0, d0 + 0.42, 0.41, 0.45, C.dark]);
   const b = backAtStart ? d0 : d0 + 0.38; P.push([c - 0.21, c + 0.21, b, b + 0.04, 0.45, 0.88, C.dark]);
@@ -685,9 +699,12 @@ const chair = (P, c, d0, backAtStart) => {
 const tableSet = (tw, td) => {
   const P = [[0.05, 0.05 + tw, 0.5, 0.5 + td, 0.71, 0.75, C.wood]], dep = td + 1.0;
   for (const [la, ld] of [[0.1, 0.55], [tw - 0.06, 0.55], [0.1, 0.39 + td], [tw - 0.06, 0.39 + td]]) P.push([la, la + 0.06, ld, ld + 0.06, 0, 0.71, C.wood]);
-  const n = tw >= 1.5 ? 2 : 1;
-  for (let i = 0; i < n; i++) { const c = 0.05 + tw * (i + 0.5) / n; chair(P, c, 0.1, true); chair(P, c, dep - 0.52, false); }
-  return { w: tw + 0.1, dep, parts: P };
+  const n = tw >= 1.5 ? 2 : 1, M = [['table', 0.05, 0.05 + tw, 0.5, 0.5 + td, 0, 0.76]];
+  for (let i = 0; i < n; i++) {
+    const c = 0.05 + tw * (i + 0.5) / n; chair(P, c, 0.1, true); chair(P, c, dep - 0.52, false);
+    M.push(['chairCushion', c - 0.22, c + 0.22, 0.1, 0.54, 0, 0.92], ['chairCushion', c - 0.22, c + 0.22, dep - 0.54, dep - 0.1, 0, 0.92, 'flip']);
+  }
+  return { w: tw + 0.1, dep, parts: P, models: M };
 };
 const kitchenRun = (L, uppers) => {
   const P = [[0, 0.66, 0.02, 0.68, 0, 1.9, C.steel], [0.68, L, 0.06, 0.56, 0, 0.1, C.dark], [0.68, L, 0.02, 0.6, 0.1, 0.86, C.cab], [0.68, L, 0, 0.63, 0.86, 0.9, C.stone]];
@@ -695,7 +712,14 @@ const kitchenRun = (L, uppers) => {
   if (run >= 1.5) { const h = 0.68 + run * 0.66 - 0.3, s = 0.68 + run * 0.22 - 0.25; P.push([h, h + 0.6, 0.08, 0.56, 0.9, 0.908, C.black], [s, s + 0.5, 0.12, 0.5, 0.9, 0.906, 0x99a3ac]); }
   else if (run >= 0.7) P.push([0.72, 1.32, 0.08, 0.56, 0.9, 0.908, C.black]);
   if (uppers) P.push([0.68, L, 0.02, 0.36, 1.45, 2.1, C.cab]);
-  return { w: L, dep: 0.68, parts: P };
+  // the same run as cabinet modules about 60 cm wide: a sink a quarter of the way along, a stove under a hood further on
+  const n = Math.max(1, Math.round(run / 0.6)), m = run / n, M = [['kitchenFridge', 0, 0.66, 0.02, 0.68, 0, 1.9]];
+  for (let i = 0; i < n; i++) {
+    const a0 = 0.68 + i * m, name = n >= 3 && i === Math.floor(n * 0.7) ? 'kitchenStove' : n >= 2 && i === Math.floor(n * 0.25) ? 'kitchenSink' : i % 2 ? 'kitchenCabinetDrawer' : 'kitchenCabinet';
+    M.push([name, a0, a0 + m, 0, 0.63, 0, name === 'kitchenSink' ? 1.0 : 0.92]);
+    if (uppers) M.push(name === 'kitchenStove' ? ['hoodModern', a0, a0 + m, 0.02, 0.5, 1.5, 2.1] : ['kitchenCabinetUpper', a0, a0 + m, 0.02, 0.37, 1.45, 2.1]);
+  }
+  return { w: L, dep: 0.68, parts: P, models: M };
 };
 
 const RECIPES = {
@@ -704,7 +728,7 @@ const RECIPES = {
     let bedSide = null;
     const order = sides(ctx, i => solid(i) + (i.depth >= 2.75 ? 4 : -20) + (i.len >= bw + 1.1 ? 2 : 0));
     for (const ns of [true, false]) { for (const s of order) { if (along(ctx, s, bedItem(bw, ns, ctx.soft)) !== null) { bedSide = s.side; break; } } if (bedSide) break; }
-    for (const w of [1.8, 1.2, 0.9]) if (anySide(ctx, { w, dep: 0.6, tall: true, parts: [[0, w, 0, 0.6, 0, 2.1, C.ward], [w / 2 - 0.01, w / 2 + 0.01, 0.6, 0.605, 0.05, 2.05, C.dark]] }, i => -i.doors * 10 - i.windows * 5 + i.len * 0.1, ['start', 'end', 'center'], bedSide ? [bedSide] : [])) break;
+    for (const w of [1.8, 1.2, 0.9]) if (anySide(ctx, { w, dep: 0.6, tall: true, parts: [[0, w, 0, 0.6, 0, 2.1, C.ward], [w / 2 - 0.01, w / 2 + 0.01, 0.6, 0.605, 0.05, 2.05, C.dark]], models: (n => Array.from({ length: n }, (_, i) => ['bookcaseClosedDoors', i * w / n, (i + 1) * w / n, 0, 0.6, 0, 2.1]))(Math.round(w / 0.9)) }, i => -i.doors * 10 - i.windows * 5 + i.len * 0.1, ['start', 'end', 'center'], bedSide ? [bedSide] : [])) break;
     if (area >= 12) anySide(ctx, plantItem(), () => 0, ['start', 'end']);
   },
   living(ctx) {
@@ -713,16 +737,18 @@ const RECIPES = {
     for (const s of order) { w = clamp(Math.round(s.len * 0.55 * 4) / 4, 1.7, 2.6); a = along(ctx, s, sofaItem(w, ctx.soft)); if (a !== null) { done = s; break; } }
     if (done) {
       const c = a + w / 2;
-      if (done.depth >= 2.7) put(ctx, done.fr, c - 0.55, 1.35, { w: 1.1, dep: 0.6, parts: [[0, 1.1, 0, 0.6, 0.34, 0.39, C.wood], [0.06, 1.04, 0.06, 0.54, 0.1, 0.14, C.wood], [0.04, 0.1, 0.04, 0.1, 0, 0.34, C.dark], [1.0, 1.06, 0.04, 0.1, 0, 0.34, C.dark], [0.04, 0.1, 0.5, 0.56, 0, 0.34, C.dark], [1.0, 1.06, 0.5, 0.56, 0, 0.34, C.dark]] });
+      if (done.depth >= 2.7) put(ctx, done.fr, c - 0.55, 1.35, { w: 1.1, dep: 0.6, parts: [[0, 1.1, 0, 0.6, 0.34, 0.39, C.wood], [0.06, 1.04, 0.06, 0.54, 0.1, 0.14, C.wood], [0.04, 0.1, 0.04, 0.1, 0, 0.34, C.dark], [1.0, 1.06, 0.04, 0.1, 0, 0.34, C.dark], [0.04, 0.1, 0.5, 0.56, 0, 0.34, C.dark], [1.0, 1.06, 0.5, 0.56, 0, 0.34, C.dark]], models: [['tableCoffee', 0, 1.1, 0, 0.6, 0, 0.42]] });
       const rw = Math.min(2.8, done.len - 0.3), rd = Math.min(2.0, done.depth - 0.9);
-      if (rd > 1) put(ctx, done.fr, clamp(c - rw / 2, 0.1, done.len - rw - 0.1), 0.7, { w: rw, dep: rd, soft: true, parts: [[0, rw, 0, rd, 0.004, 0.018, C.rug], [0.12, rw - 0.12, 0.12, rd - 0.12, 0.018, 0.022, lighten(ctx.soft, 0.55)]] });
+      if (rd > 1) put(ctx, done.fr, clamp(c - rw / 2, 0.1, done.len - rw - 0.1), 0.7, { w: rw, dep: rd, soft: true, parts: [[0, rw, 0, rd, 0.004, 0.018, C.rug], [0.12, rw - 0.12, 0.12, rd - 0.12, 0.018, 0.022, lighten(ctx.soft, 0.55)]], models: [['rugRectangle', 0, rw, 0, rd, 0.004, 0.026]] });
       if (done.depth >= 3.1) {
         const opp = sideInfo(ctx, { N: 'S', S: 'N', W: 'E', E: 'W' }[done.side]);
-        const tv = { w: 1.6, dep: 0.42, parts: [[0, 1.6, 0, 0.42, 0.06, 0.48, C.wood], [0.2, 1.4, 0.16, 0.2, 0.56, 1.26, C.black]] };
+        const tv = { w: 1.6, dep: 0.42, parts: [[0, 1.6, 0, 0.42, 0.06, 0.48, C.wood], [0.2, 1.4, 0.16, 0.2, 0.56, 1.26, C.black]], models: [['cabinetTelevision', 0, 1.6, 0, 0.42, 0, 0.5], ['televisionModern', 0.25, 1.35, 0.12, 0.32, 0.5, 1.22]] };
         if (!put(ctx, opp.fr, clamp(opp.len - c - 0.8, 0.06, opp.len - 1.66), 0, tv)) along(ctx, opp, tv);
       }
     }
     anySide(ctx, shelfItem(1.0), i => -i.doors * 6 - i.windows * 5, ['start', 'end']);
+    if (ctx.r.w * ctx.r.h >= 18) anySide(ctx, { w: 0.9, dep: 0.9, parts: [[0, 0.9, 0.04, 0.9, 0.08, 0.42, ctx.soft], [0, 0.9, 0.04, 0.24, 0.42, 0.82, ctx.soft], [0, 0.14, 0.04, 0.9, 0.42, 0.6, ctx.soft], [0.76, 0.9, 0.04, 0.9, 0.42, 0.6, ctx.soft]], models: [['loungeChair', 0, 0.9, 0.04, 0.9, 0, 0.86]] }, i => -i.doors * 4 - i.windows, ['end', 'start']);
+    anySide(ctx, { w: 0.4, dep: 0.4, parts: [[0.17, 0.23, 0.17, 0.23, 0, 1.45, C.dark, 'cyl'], [0.07, 0.33, 0.07, 0.33, 1.45, 1.72, 0xf1e3c4, 'cyl']], models: [['lampRoundFloor', 0.08, 0.32, 0.08, 0.32, 0, 1.72]] }, () => 0, ['start', 'end']);
     anySide(ctx, plantItem(), () => 0, ['end', 'start']);
   },
   studio(ctx) {
@@ -744,30 +770,30 @@ const RECIPES = {
   dining(ctx) {
     const r = ctx.r, big = Math.max(r.w, r.h) >= 3.4;
     free(ctx, tableSet(big ? 1.8 : 1.2, 0.9)) || free(ctx, tableSet(0.9, 0.8));
-    anySide(ctx, { w: 1.4, dep: 0.42, parts: [[0, 1.4, 0, 0.42, 0.08, 0.82, C.wood], [0, 1.4, 0, 0.44, 0.82, 0.85, C.dark]] }, solid, ['center', 'start', 'end']);
+    anySide(ctx, { w: 1.4, dep: 0.42, parts: [[0, 1.4, 0, 0.42, 0.08, 0.82, C.wood], [0, 1.4, 0, 0.44, 0.82, 0.85, C.dark]], models: [['cabinetTelevision', 0, 1.4, 0, 0.42, 0, 0.85]] }, solid, ['center', 'start', 'end']);
   },
   bathroom(ctx) {
     const r = ctx.r, area = r.w * r.h, sc = i => -i.doors * 10 + i.len * 0.2;
-    if (area >= 5 && Math.max(r.w, r.h) >= 2.2) anySide(ctx, { w: 1.7, dep: 0.75, parts: [[0, 1.7, 0, 0.75, 0, 0.56, C.white], [0.07, 1.63, 0.07, 0.68, 0.56, 0.566, 0xcfe3ea]] }, sc, ['start', 'end']);
+    if (area >= 5 && Math.max(r.w, r.h) >= 2.2) anySide(ctx, { w: 1.7, dep: 0.75, parts: [[0, 1.7, 0, 0.75, 0, 0.56, C.white], [0.07, 1.63, 0.07, 0.68, 0.56, 0.566, 0xcfe3ea]], models: [['bathtub', 0, 1.7, 0, 0.75, 0, 0.6]] }, sc, ['start', 'end']);
     else for (const s of sides(ctx, sc)) {
-      if (along(ctx, s, { w: 0.9, dep: 0.9, parts: [[0, 0.9, 0, 0.9, 0, 0.06, C.white], [0.87, 0.9, 0, 0.9, 0.06, 2.0, 0, 'glass'], [0, 0.9, 0.87, 0.9, 0.06, 2.0, 0, 'glass']] }, ['start']) !== null) break;
-      if (along(ctx, s, { w: 0.9, dep: 0.9, parts: [[0, 0.9, 0, 0.9, 0, 0.06, C.white], [0, 0.03, 0, 0.9, 0.06, 2.0, 0, 'glass'], [0, 0.9, 0.87, 0.9, 0.06, 2.0, 0, 'glass']] }, ['end']) !== null) break;
+      if (along(ctx, s, { w: 0.9, dep: 0.9, parts: [[0, 0.9, 0, 0.9, 0, 0.06, C.white], [0.87, 0.9, 0, 0.9, 0.06, 2.0, 0, 'glass'], [0, 0.9, 0.87, 0.9, 0.06, 2.0, 0, 'glass']], models: [['shower', 0, 0.9, 0, 0.9, 0, 2.0]] }, ['start']) !== null) break;
+      if (along(ctx, s, { w: 0.9, dep: 0.9, parts: [[0, 0.9, 0, 0.9, 0, 0.06, C.white], [0, 0.03, 0, 0.9, 0.06, 2.0, 0, 'glass'], [0, 0.9, 0.87, 0.9, 0.06, 2.0, 0, 'glass']], models: [['shower', 0, 0.9, 0, 0.9, 0, 2.0]] }, ['end']) !== null) break;
     }
-    anySide(ctx, { w: 0.42, dep: 0.68, parts: [[0, 0.42, 0, 0.18, 0.36, 0.8, C.white], [0.03, 0.39, 0.18, 0.66, 0, 0.4, C.white], [0.02, 0.4, 0.17, 0.67, 0.4, 0.43, 0xe2e0da]] }, sc, ['end', 'start', 'center']);
-    for (const w of [0.8, 0.6]) if (anySide(ctx, { w, dep: 0.48, parts: [[0, w, 0.02, 0.46, 0.3, 0.8, C.wood], [0, w, 0, 0.48, 0.8, 0.84, C.white], [w / 2 - 0.2, w / 2 + 0.2, 0.1, 0.4, 0.84, 0.846, 0xd6e2e8], [0.05, w - 0.05, 0, 0.025, 1.1, 1.75, 0xbcd2de]] }, i => sc(i) - i.windows * 3, ['center', 'start', 'end'])) break;
+    anySide(ctx, { w: 0.42, dep: 0.68, parts: [[0, 0.42, 0, 0.18, 0.36, 0.8, C.white], [0.03, 0.39, 0.18, 0.66, 0, 0.4, C.white], [0.02, 0.4, 0.17, 0.67, 0.4, 0.43, 0xe2e0da]], models: [['toilet', 0, 0.42, 0, 0.68, 0, 0.82]] }, sc, ['end', 'start', 'center']);
+    for (const w of [0.8, 0.6]) if (anySide(ctx, { w, dep: 0.48, parts: [[0, w, 0.02, 0.46, 0.3, 0.8, C.wood], [0, w, 0, 0.48, 0.8, 0.84, C.white], [w / 2 - 0.2, w / 2 + 0.2, 0.1, 0.4, 0.84, 0.846, 0xd6e2e8], [0.05, w - 0.05, 0, 0.025, 1.1, 1.75, 0xbcd2de]], models: [['bathroomCabinetDrawer', 0, w, 0, 0.48, 0, 0.9], ['bathroomMirror', 0.1, w - 0.1, 0, 0.08, 1.1, 1.75]] }, i => sc(i) - i.windows * 3, ['center', 'start', 'end'])) break;
   },
   office(ctx) {
-    const desk = { w: 1.4, dep: 1.25, parts: [[0, 1.4, 0, 0.65, 0.7, 0.74, C.wood], [0, 0.04, 0.02, 0.63, 0, 0.7, C.dark], [1.36, 1.4, 0.02, 0.63, 0, 0.7, C.dark], [0.92, 1.36, 0.05, 0.6, 0.3, 0.7, C.wood], [0.45, 0.95, 0.12, 0.15, 0.84, 1.16, C.black], [0.66, 0.74, 0.08, 0.2, 0.74, 0.84, C.black], [0.48, 0.92, 0.74, 1.18, 0.44, 0.5, C.black], [0.48, 0.92, 1.14, 1.18, 0.5, 0.95, C.black], [0.62, 0.78, 0.88, 1.04, 0, 0.44, C.dark, 'cyl']] };
+    const desk = { w: 1.4, dep: 1.25, parts: [[0, 1.4, 0, 0.65, 0.7, 0.74, C.wood], [0, 0.04, 0.02, 0.63, 0, 0.7, C.dark], [1.36, 1.4, 0.02, 0.63, 0, 0.7, C.dark], [0.92, 1.36, 0.05, 0.6, 0.3, 0.7, C.wood], [0.45, 0.95, 0.12, 0.15, 0.84, 1.16, C.black], [0.66, 0.74, 0.08, 0.2, 0.74, 0.84, C.black], [0.48, 0.92, 0.74, 1.18, 0.44, 0.5, C.black], [0.48, 0.92, 1.14, 1.18, 0.5, 0.95, C.black], [0.62, 0.78, 0.88, 1.04, 0, 0.44, C.dark, 'cyl']], models: [['desk', 0, 1.4, 0, 0.65, 0, 0.75], ['computerScreen', 0.45, 0.95, 0.1, 0.26, 0.75, 1.2], ['chairDesk', 0.42, 0.98, 0.7, 1.22, 0, 1.05, 'flip']] };
     const s = anySide(ctx, desk, i => -i.doors * 10 + i.windows * 3 + i.len * 0.1);
     anySide(ctx, shelfItem(0.9), i => -i.doors * 6 - i.windows * 5, ['start', 'end', 'center'], s ? [s.side] : []);
     anySide(ctx, plantItem(), () => 0, ['end', 'start']);
   },
   hallway(ctx) {
     if (Math.min(ctx.r.w, ctx.r.h) < 1.2) return;
-    anySide(ctx, { w: 1.0, dep: 0.3, parts: [[0, 1.0, 0, 0.3, 0.74, 0.78, C.wood], [0.02, 0.06, 0.02, 0.28, 0, 0.74, C.dark], [0.94, 0.98, 0.02, 0.28, 0, 0.74, C.dark]] }, i => -i.doors * 10 + i.len * 0.1, ['center', 'start', 'end']);
+    anySide(ctx, { w: 1.0, dep: 0.3, parts: [[0, 1.0, 0, 0.3, 0.74, 0.78, C.wood], [0.02, 0.06, 0.02, 0.28, 0, 0.74, C.dark], [0.94, 0.98, 0.02, 0.28, 0, 0.74, C.dark]], models: [['sideTable', 0, 1.0, 0, 0.3, 0, 0.78]] }, i => -i.doors * 10 + i.len * 0.1, ['center', 'start', 'end']);
   },
   laundry(ctx) {
-    anySide(ctx, { w: 1.26, dep: 0.64, parts: [[0, 0.6, 0.02, 0.62, 0, 0.85, C.white], [0.64, 1.24, 0.02, 0.62, 0, 0.85, C.white], [0, 1.26, 0, 0.64, 0.85, 0.89, C.stone], [0.14, 0.46, 0.62, 0.635, 0.28, 0.6, C.black, 'box'], [0.78, 1.1, 0.62, 0.635, 0.28, 0.6, C.black, 'box']] }, solid, ['start', 'end', 'center']);
+    anySide(ctx, { w: 1.26, dep: 0.64, parts: [[0, 0.6, 0.02, 0.62, 0, 0.85, C.white], [0.64, 1.24, 0.02, 0.62, 0, 0.85, C.white], [0, 1.26, 0, 0.64, 0.85, 0.89, C.stone], [0.14, 0.46, 0.62, 0.635, 0.28, 0.6, C.black, 'box'], [0.78, 1.1, 0.62, 0.635, 0.28, 0.6, C.black, 'box']], models: [['washer', 0, 0.6, 0.02, 0.62, 0, 0.86], ['dryer', 0.64, 1.24, 0.02, 0.62, 0, 0.86]] }, solid, ['start', 'end', 'center']);
     anySide(ctx, shelfItem(0.9), i => -i.doors * 6 - i.windows * 5, ['start', 'end']);
   },
   storage(ctx) { for (const w of [1.8, 1.2, 0.9]) if (anySide(ctx, shelfItem(w), solid, ['center', 'start', 'end'])) break; },
@@ -1091,7 +1117,7 @@ $('#zoomBtn').addEventListener('click', () => { state.zoomHome = !state.zoomHome
 
 /* ---------- 3D view ---------- */
 const view = (() => {
-  const canvas = $('#view3d'), noop = { build() {}, fit() {}, resize() {}, setInsets() {}, reframe() {}, stats: () => ({ skins: 0, tiled: 0 }) };
+  const canvas = $('#view3d'), noop = { build() {}, fit() {}, resize() {}, setInsets() {}, reframe() {}, stats: () => ({ skins: 0, tiled: 0, models: 0, boxes: 0 }) };
   if (typeof THREE === 'undefined') { $('#nogl').hidden = false; $('#nogl').textContent = 'The 3D library did not load. Check the connection and reload. The plan still works.'; $('#hint3d').hidden = true; return noop; }
   let renderer;
   try { renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true }); } catch (e) { $('#nogl').hidden = false; $('#hint3d').hidden = true; return noop; }
@@ -1122,7 +1148,17 @@ const view = (() => {
     }
     return finishMats[id];
   }
-  let stats = { skins: 0, tiled: 0 };
+  let stats = { skins: 0, tiled: 0, models: 0, boxes: 0 };
+  // The kit's materials are unlit flat colours. Each becomes a lit one here: fabric takes the room's colour, wood matches the page's wood.
+  const litMats = new Map();
+  function lit(src, tint) {
+    const fabric = src.name === 'carpet' || src.name === 'carpetDarker', key = src.name + '|' + src.hex + (fabric ? '|' + tint : '');
+    if (!litMats.has(key)) {
+      const c = src.name === 'carpet' ? tint : src.name === 'carpetDarker' ? lighten(tint, 0.45) : src.name === 'wood' ? C.wood : src.name === 'woodDark' ? C.dark : src.hex;
+      litMats.set(key, src.name === 'glass' ? glass : new THREE.MeshLambertMaterial({ color: c, flatShading: true }));
+    }
+    return litMats.get(key);
+  }
 
   const orbit = { target: new THREE.Vector3(), r: 20, theta: -0.62, phi: 0.82 };
   const inset = { top: 0, right: 0, bottom: 0 }, offset = { x: 0, y: 0 }; // offset: how far the picture is shifted, in pixels, to clear the floating controls
@@ -1165,7 +1201,7 @@ const view = (() => {
   function build() {
     if (!state.plan || !state.an) return;
     if (group) { scene.remove(group); group.traverse(o => { if (o.geometry && o.userData.own) o.geometry.dispose(); }); }
-    group = new THREE.Group(); floors = []; stats = { skins: 0, tiled: 0 };
+    group = new THREE.Group(); floors = []; stats = { skins: 0, tiled: 0, models: 0, boxes: 0 };
     const H = state.cut ? CUT_H : WALL_H, wallMat = mat(0xf2f0eb), capMat = mat(0x2b3742), b = bounds(state.plan);
     const box = (x0, x1, y0, y1, z0, z1, m, cast = true) => {
       const me = new THREE.Mesh(unit, m); me.scale.set(x1 - x0, y1 - y0, z1 - z0); me.position.set((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2);
@@ -1227,14 +1263,29 @@ const view = (() => {
       }
       seg(cur, p.t1 + half, 0, WALL_H);
     }
-    if (state.furniture) for (const f of furnish(state.plan, state.an)) {
-      if (f.z0 >= H - 0.2 && state.cut) continue;
+    const drawPart = f => {
+      if (f.z0 >= H - 0.2 && state.cut) return;
+      stats.boxes++;
       if (f.kind === 'box') box(f.x0, f.x1, f.z0, f.z1, f.y0, f.y1, mat(f.color));
       else if (f.kind === 'glass') { const top = Math.min(f.z1, H + 0.5); if (top > f.z0) box(f.x0, f.x1, f.z0, top, f.y0, f.y1, glass, false); }
       else {
         const d = Math.min(f.x1 - f.x0, f.y1 - f.y0), me = new THREE.Mesh(f.kind === 'cyl' ? cyl : ball, f.kind === 'ball' ? leafMat : mat(f.color));
         me.scale.set(d, f.z1 - f.z0, d); me.position.set((f.x0 + f.x1) / 2, (f.z0 + f.z1) / 2, (f.y0 + f.y1) / 2); me.castShadow = true; me.receiveShadow = true; group.add(me);
       }
+    };
+    // A model is stretched to the box the layout gave it, so it always fits the room the way the boxes did.
+    const drawModel = (m, tint) => {
+      if (m.y0 >= H - 0.2 && state.cut) return;
+      const src = modelLib.get(m.name), inner = src.scene.clone(true), holder = new THREE.Group();
+      inner.traverse(o => { if (o.isMesh) { o.material = lit(o.userData.src, tint); o.castShadow = true; o.receiveShadow = true; } });
+      inner.position.set(-src.centre.x, -src.min.y, -src.centre.z);
+      holder.add(inner); holder.scale.set(m.w / src.size.x, m.h / src.size.y, m.d / src.size.z); holder.rotation.y = m.yaw; holder.position.set(m.cx, m.y0, m.cz);
+      group.add(holder); stats.models++;
+    };
+    if (state.furniture) for (const f of furnish(state.plan, state.an)) {
+      if (f.kind !== 'set') drawPart(f);
+      else if (f.models.every(m => modelLib.has(m.name))) f.models.forEach(m => drawModel(m, f.tint));
+      else f.alt.forEach(drawPart);
     }
     const s = selected();
     if (s) { const t = 0.05, y0 = 0.012, y1 = 0.03;
@@ -1496,7 +1547,7 @@ function explain(e) {
 /* ---------- state machines (XState) ----------
    Each multi-step flow is one machine, so a step that should be impossible cannot happen.
    Plan data stays in `state.plan` and `under`; a machine only records which step its flow is in.
-   The current step of every machine is mirrored on .wrap as data-tool, data-drawing, data-describe, data-read. */
+   The current step of every machine is mirrored on .wrap as data-tool, data-drawing, data-describe, data-read, data-models. */
 const { setup, createActor, assign, fromPromise } = XState;
 
 // tool: what the pointer is doing on the 2D plan
@@ -1661,8 +1712,29 @@ function claudeTask(id, o) {
     },
   });
 }
+// models: the furniture model files. Until they are ready, and if they never are, furniture is drawn from boxes.
+const modelsMachine = setup({
+  actors: { load: fromPromise(async () => {
+    const packed = window.ROOMLINES_MODELS;
+    if (!packed || typeof THREE === 'undefined' || !THREE.GLTFLoader) throw new Error('no models');
+    const loader = new THREE.GLTFLoader();
+    const bytes = b64 => { const bin = atob(b64), u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); return u.buffer; };
+    await Promise.all(Object.entries(packed).map(([name, b64]) => new Promise((ok, no) => loader.parse(bytes(b64), '', g => {
+      const scene = g.scene; scene.updateMatrixWorld(true);
+      const box = new THREE.Box3().setFromObject(scene), size = box.getSize(new THREE.Vector3());
+      if (!(size.x > 0 && size.y > 0 && size.z > 0)) { no(new Error('empty model ' + name)); return; }
+      scene.traverse(o => { if (o.isMesh) o.userData.src = { name: o.material.name || '', hex: o.material.color ? o.material.color.clone().convertLinearToSRGB().getHex() : 0xcccccc }; });
+      modelLib.set(name, { scene, min: box.min.clone(), size, centre: box.getCenter(new THREE.Vector3()) }); ok();
+    }, no))));
+    return modelLib.size;
+  }) },
+  actions: { redraw: () => { if (state.plan) view.build(); }, forget: () => modelLib.clear() },
+}).createMachine({
+  id: 'models', initial: 'loading',
+  states: { loading: { invoke: { src: 'load', onDone: { target: 'ready', actions: 'redraw' }, onError: { target: 'none', actions: 'forget' } } }, ready: {}, none: {} },
+});
 const askSay = (t, err) => { const el = $('#askStatus'); el.className = 'status' + (err ? ' err' : ''); el.textContent = t; };
-const tool = createActor(toolMachine), drawing = createActor(drawingMachine);
+const tool = createActor(toolMachine), drawing = createActor(drawingMachine), models = createActor(modelsMachine);
 const describe = createActor(claudeTask('describe', {
   say: askSay, writing: 'Drawing the layout.',
   request: signal => { const box = $('#askText'), want = box.value.trim() || box.placeholder; return sample.json(ASK + want.slice(0, 1500), { signal, cache: false, onText: () => describe.send({ type: 'TEXT' }) }); },
@@ -1704,7 +1776,7 @@ tool.subscribe(s => {
 });
 
 /* ---------- window.roomlines: the same controls, for scripts, tests and agents ---------- */
-const actors = { tool, drawing, describe, read }, listeners = new Set(), log = [];
+const actors = { tool, drawing, describe, read, models }, listeners = new Set(), log = [];
 const flat = v => typeof v === 'string' ? v : Object.entries(v).map(([k, c]) => `${k}.${flat(c)}`).join('+');
 const api = {
   version: 1, debug: false, log,
