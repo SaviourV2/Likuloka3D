@@ -5,7 +5,7 @@ A floor plan editor that runs in one HTML page. You draw rooms as rectangles on 
 `index.html` is the page you host. `app.html` is the same page without the outer HTML document, which is the form Claude artifacts take. Edit `app.html`, then rebuild `index.html`:
 
 ```bash
-./plan3d/build.sh
+./build.sh
 ```
 
 ## What it does
@@ -150,10 +150,10 @@ roomlines.debug = true                   // print each transition to the console
 `tests/run.js` opens `index.html` in headless Chromium and checks editing, uploads, the scale tool, both Claude flows against a stand-in, the scripting API, the phone layout and a failed script download. It needs Playwright with Chromium available to Node.
 
 ```bash
-cd plan3d/tests && npm install && npm test
+cd tests && npm install && npm test
 ```
 
-Run `./plan3d/build.sh` first if `app.html` changed, because the tests load `index.html`.
+Run `./build.sh` first if `app.html` changed, because the tests load `index.html`.
 
 ## Limits
 
