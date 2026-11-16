@@ -173,7 +173,12 @@ textarea { resize: vertical; min-height: 68px; }
 .stack { display: flex; flex-direction: column; gap: 10px; }
 .field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .field.wide { grid-column: 1 / -1; }
-.field label { font-size: 12px; color: var(--muted); }
+.field label, .field .lbl { font-size: 12px; color: var(--muted); }
+.swatches { display: flex; flex-wrap: wrap; gap: 7px; align-items: center; }
+.swatch { width: 26px; height: 26px; padding: 0; border: 0; border-radius: 50%; cursor: pointer; box-shadow: inset 0 0 0 1px var(--field-strong); transition: transform .2s var(--spring); }
+.swatch:active { transform: scale(.9); }
+.swatch[aria-pressed="true"] { outline: 2px solid var(--accent); outline-offset: 2px; }
+.swatches input[type="color"] { width: 30px; height: 30px; padding: 0; border: 0; border-radius: 8px; background: transparent; cursor: pointer; }
 .field input[type="range"] { padding: 0; background: transparent; accent-color: var(--accent); }
 .rooms { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
 .rooms button { width: 100%; display: grid; grid-template-columns: 12px minmax(0, 1fr) auto; gap: 10px; align-items: center; background: transparent; border: 0; border-radius: 12px; padding: 8px 10px; color: var(--ink); font: 400 14px var(--font-body); text-align: left; cursor: pointer; transition: background .2s; }
@@ -212,7 +217,7 @@ body[data-panel="open"] .panes.mode-plan .zoom { right: calc(var(--panel-w) + 40
   .grab::before { content: ""; width: 38px; height: 5px; border-radius: 999px; background: var(--field-strong); }
 }
 ::view-transition { pointer-events: none; }
-::view-transition-group(*) { animation-duration: .42s; animation-timing-function: cubic-bezier(.22, .9, .24, 1); }
+::view-transition-group(*), ::view-transition-old(*), ::view-transition-new(*) { animation-duration: .28s; animation-timing-function: cubic-bezier(.22, .9, .24, 1); }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; animation: none !important; }
   ::view-transition-group(*), ::view-transition-old(*), ::view-transition-new(*) { animation: none !important; }
@@ -309,6 +314,12 @@ body[data-panel="open"] .panes.mode-plan .zoom { right: calc(var(--panel-w) + 40
           <div class="field wide"><label for="edType">Use</label><select id="edType"></select></div>
           <div class="field"><label for="edW">Width (m)</label><input id="edW" type="number" min="1" max="40" step="0.25" inputmode="decimal"></div>
           <div class="field"><label for="edH">Depth (m)</label><input id="edH" type="number" min="1" max="40" step="0.25" inputmode="decimal"></div>
+          <div class="field wide"><label for="edFloor">Floor</label><select id="edFloor"></select></div>
+          <div class="field wide"><span class="lbl" id="edPaintLbl">Wall paint</span>
+            <div class="swatches" id="edPaints" role="group" aria-labelledby="edPaintLbl"></div></div>
+          <div class="field"><label for="edTile">Wall tile</label><select id="edTile"></select></div>
+          <div class="field"><label for="edTileTo">Tile height</label><select id="edTileTo"></select></div>
+          <div class="field wide"><label for="edSpec">Product note</label><input id="edSpec" type="text" maxlength="80" autocomplete="off" placeholder="Tile or paint name and code from your supplier"></div>
           <div class="field wide"><button type="button" class="btn danger" id="delRoom">Delete room</button></div>
         </div>
         <p>Drag a room on the plan to move it and drag a corner to resize. Rooms that share an edge get a door between them.</p>
@@ -348,17 +359,87 @@ const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;'
 
 // circ: how willingly a room carries traffic to its neighbours (lower = corridor-like).
 const TYPES = {
-  living:   { label: 'Living room', fill: '#f0c36d', floor: 'wood',  circ: 1, windows: 2 },
-  kitchen:  { label: 'Kitchen',     fill: '#97d1c2', floor: 'tileL', circ: 3, windows: 1 },
-  dining:   { label: 'Dining room', fill: '#efb387', floor: 'wood',  circ: 2, windows: 1 },
-  bedroom:  { label: 'Bedroom',     fill: '#a6bfee', floor: 'wood',  circ: 6, windows: 1 },
-  bathroom: { label: 'Bathroom',    fill: '#86cde6', floor: 'tileS', circ: 9, windows: 1 },
-  office:   { label: 'Office',      fill: '#c5b3ea', floor: 'wood',  circ: 5, windows: 1 },
-  hallway:  { label: 'Hallway',     fill: '#d3d9df', floor: 'wood',  circ: 0, windows: 0 },
-  laundry:  { label: 'Laundry',     fill: '#b6d8a2', floor: 'tileS', circ: 7, windows: 1 },
-  storage:  { label: 'Storage',     fill: '#c8c0b1', floor: 'plain', circ: 8, windows: 0 },
-  studio:   { label: 'Studio room', fill: '#f0c36d', floor: 'wood',  circ: 1, windows: 2 },
+  living:   { label: 'Living room', fill: '#f0c36d', floor: 'oak',  circ: 1, windows: 2 },
+  kitchen:  { label: 'Kitchen',     fill: '#97d1c2', floor: 'tile-60', circ: 3, windows: 1 },
+  dining:   { label: 'Dining room', fill: '#efb387', floor: 'oak',  circ: 2, windows: 1 },
+  bedroom:  { label: 'Bedroom',     fill: '#a6bfee', floor: 'oak',  circ: 6, windows: 1 },
+  bathroom: { label: 'Bathroom',    fill: '#86cde6', floor: 'tile-20', circ: 9, windows: 1, tile: 'tile-30x60' },
+  office:   { label: 'Office',      fill: '#c5b3ea', floor: 'oak',  circ: 5, windows: 1 },
+  hallway:  { label: 'Hallway',     fill: '#d3d9df', floor: 'oak',  circ: 0, windows: 0 },
+  laundry:  { label: 'Laundry',     fill: '#b6d8a2', floor: 'tile-20', circ: 7, windows: 1 },
+  storage:  { label: 'Storage',     fill: '#c8c0b1', floor: 'concrete', circ: 8, windows: 0 },
+  studio:   { label: 'Studio room', fill: '#f0c36d', floor: 'oak',  circ: 1, windows: 2 },
 };
+/* Finishes. Each one is drawn into a small canvas that repeats every `span` metres, so tiles and planks keep their real size on any surface.
+   `wall: true` marks the ones that can also go on a wall. Sizes are common trade formats, not any one maker's range. */
+function seeded(seed) { return () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+const drawPlanks = (hue, sat, light) => g => {
+  const r = seeded(7);
+  for (let row = 0; row < 8; row++) {
+    let x = -Math.floor(r() * 120);
+    while (x < 256) { const w = 90 + Math.floor(r() * 80); g.fillStyle = `hsl(${hue} ${sat}% ${light + r() * 12}%)`; g.fillRect(x, row * 32, w, 32); g.fillStyle = 'rgba(40,25,10,.28)'; g.fillRect(x, row * 32, 1.5, 32); x += w; }
+    g.fillStyle = 'rgba(40,25,10,.22)'; g.fillRect(0, row * 32, 256, 1.5);
+  }
+};
+const drawTiles = (cols, rows, base, grout, vary = 4, joint = 2.5) => g => {
+  const r = seeded(cols * 31 + rows), w = 256 / cols, h = 256 / rows, m = /^#(..)(..)(..)$/.exec(base).slice(1).map(v => parseInt(v, 16));
+  g.fillStyle = grout; g.fillRect(0, 0, 256, 256);
+  for (let i = 0; i < cols; i++) for (let j = 0; j < rows; j++) { const d = (r() - 0.5) * vary * 2; g.fillStyle = `rgb(${m[0] + d},${m[1] + d},${m[2] + d})`; g.fillRect(i * w + joint / 2, j * h + joint / 2, w - joint, h - joint); }
+};
+const drawMarble = (cols, rows) => g => {
+  drawTiles(cols, rows, '#eceae6', '#c9c6c0', 2, 2)(g);
+  const r = seeded(91);
+  for (let k = 0; k < 14; k++) {
+    let x = r() * 256, y = r() * 256; g.beginPath(); g.moveTo(x, y);
+    for (let i = 0; i < 6; i++) { x += (r() - 0.3) * 70; y += (r() - 0.5) * 50; g.lineTo(x, y); }
+    g.strokeStyle = `rgba(120,118,122,${0.10 + r() * 0.16})`; g.lineWidth = 0.6 + r() * 1.6; g.stroke();
+  }
+};
+const drawTerrazzo = g => {
+  g.fillStyle = '#e4e0d8'; g.fillRect(0, 0, 256, 256);
+  const r = seeded(13), chips = ['#b9b2a6', '#8f8a83', '#d0b7a0', '#a9b3ad', '#f4f1ea', '#6f6a66'];
+  for (let k = 0; k < 420; k++) { g.fillStyle = chips[Math.floor(r() * chips.length)]; g.beginPath(); g.ellipse(r() * 256, r() * 256, 1 + r() * 4.5, 1 + r() * 3, r() * 3, 0, 6.3); g.fill(); }
+};
+const drawConcrete = g => {
+  g.fillStyle = '#b9b7b1'; g.fillRect(0, 0, 256, 256);
+  const r = seeded(5);
+  for (let k = 0; k < 900; k++) { g.fillStyle = `rgba(${r() > 0.5 ? '255,255,255' : '60,60,60'},${0.02 + r() * 0.05})`; g.fillRect(r() * 256, r() * 256, 2 + r() * 14, 1 + r() * 5); }
+};
+const FINISHES = {
+  'oak':         { label: 'Oak planks',                  span: 1.6, draw: drawPlanks(31, 34, 60) },
+  'walnut':      { label: 'Walnut planks',               span: 1.6, draw: drawPlanks(22, 32, 30) },
+  'tile-60':     { label: 'Tile 60 × 60, warm grey',     span: 1.2, draw: drawTiles(2, 2, '#d9d6cf', '#b9b5ac'), wall: true },
+  'tile-60x120': { label: 'Marble look 60 × 120',        span: 1.2, draw: drawMarble(1, 2), wall: true },
+  'tile-30x60':  { label: 'Tile 30 × 60, white',         span: 0.6, draw: drawTiles(1, 2, '#eef0ef', '#c4c9c9', 2), wall: true },
+  'tile-20':     { label: 'Tile 20 × 20, blue-grey',     span: 1.2, draw: drawTiles(6, 6, '#cfdde2', '#a9bcc4'), wall: true },
+  'subway':      { label: 'Subway tile 7.5 × 15, white', span: 0.6, draw: drawTiles(4, 8, '#f3f2ee', '#b8b5ae', 2, 2), wall: true },
+  'subway-green':{ label: 'Subway tile 7.5 × 15, sage',  span: 0.6, draw: drawTiles(4, 8, '#9db3a2', '#e3e6df', 5, 2), wall: true },
+  'terrazzo':    { label: 'Terrazzo',                    span: 1.5, draw: drawTerrazzo, wall: true },
+  'concrete':    { label: 'Polished concrete',           span: 2.0, draw: drawConcrete },
+};
+const PAINT = '#f2f0eb'; // the wall colour a room has until it is given one
+const PAINTS = [['#f2f0eb', 'Warm white'], ['#e8e2d6', 'Linen'], ['#d9d2c3', 'Sand'], ['#e6d3cc', 'Clay blush'], ['#cfd8d3', 'Sage mist'], ['#c9d6e2', 'Pale blue'], ['#b7bfae', 'Olive grey'], ['#8d9aa6', 'Slate'], ['#3d4a5c', 'Deep navy']];
+const TILE_HEIGHTS = [[0, 'Full height'], [1.2, 'Up to 1.2 m'], [0.9, 'Up to 0.9 m']];
+// What a room shows, after its type's defaults: { floor, paint, tile ('' for none), tileTo (0 = full height) }
+const finishOf = r => ({
+  floor: FINISHES[r.floor] ? r.floor : TYPES[r.type].floor,
+  paint: r.paint || PAINT,
+  tile: r.tile === 'none' ? '' : (FINISHES[r.tile] && FINISHES[r.tile].wall ? r.tile : TYPES[r.type].tile || ''),
+  tileTo: r.tileTo > 0 ? r.tileTo : 0,
+});
+// Copies finish fields from `from` onto `to`. A valid value is stored, null or '' puts the field back to the room type's default, and anything else is ignored.
+function setFinish(to, from) {
+  const put = (k, ok, clean = v => v) => { if (!(k in from)) return; const v = from[k]; if (v === null || v === '') delete to[k]; else if (ok(v)) to[k] = clean(v); };
+  put('floor', v => !!FINISHES[v]);
+  put('paint', v => /^#[0-9a-f]{6}$/i.test(String(v)), v => String(v).toLowerCase());
+  put('tile', v => v === 'none' || !!(FINISHES[v] && FINISHES[v].wall));
+  put('tileTo', v => num(v, -1) >= 0 && num(v) < WALL_H, v => Math.round(num(v) * 100) / 100);
+  put('spec', v => typeof v === 'string', v => v.trim().slice(0, 80));
+  if (to.tileTo === 0) delete to.tileTo; if (to.spec === '') delete to.spec;
+  return to;
+}
+const finishFields = r => { const o = {}; for (const k of ['floor', 'paint', 'tile', 'tileTo', 'spec']) if (r[k] !== undefined) o[k] = r[k]; return o; };
+
 const guessType = name => {
   const n = String(name).toLowerCase();
   if (/bath|wc|toilet|shower|ensuite/.test(n)) return 'bathroom';
@@ -414,7 +495,7 @@ function layoutTree(node, x, y, w, h, out, depth = 0) {
 function normalizePlan(obj) {
   if (!obj || typeof obj !== 'object' || Array.isArray(obj)) throw new Error('The plan must be one JSON object.');
   let raw = [];
-  if (Array.isArray(obj.rooms)) raw = obj.rooms.filter(r => r && typeof r === 'object').map(r => ({ name: r.name, type: r.type, x: num(r.x), y: num(r.y), w: num(r.w), h: num(r.h !== undefined ? r.h : r.d) }));
+  if (Array.isArray(obj.rooms)) raw = obj.rooms.filter(r => r && typeof r === 'object').map(r => ({ name: r.name, type: r.type, x: num(r.x), y: num(r.y), w: num(r.w), h: num(r.h !== undefined ? r.h : r.d), finish: r }));
   else if (obj.layout) layoutTree(obj.layout, 0, 0, clamp(snap(num(obj.width, 10)), 3, 40), clamp(snap(num(obj.depth, 8)), 3, 40), raw);
   else throw new Error('No rooms found. Use {"rooms": [...]} or {"width", "depth", "layout"}.');
   const rooms = raw.filter(r => r.w > 0.4 && r.h > 0.4).slice(0, 24).map(r => {
@@ -422,7 +503,7 @@ function normalizePlan(obj) {
     const type = TYPES[r.type] ? r.type : guessType(name);
     // snap the edges, not the size, so rooms that shared an edge still do
     const x = snap(r.x), y = snap(r.y);
-    return { id: 'r' + (++uid), name, type, x, y, w: clamp(snap(r.x + r.w) - x, 1, 40), h: clamp(snap(r.y + r.h) - y, 1, 40) };
+    return setFinish({ id: 'r' + (++uid), name, type, x, y, w: clamp(snap(r.x + r.w) - x, 1, 40), h: clamp(snap(r.y + r.h) - y, 1, 40) }, r.finish ? finishFields(r.finish) : {});
   });
   if (!rooms.length) throw new Error('The plan has no usable rooms.');
   const minX = Math.min(...rooms.map(r => r.x)), minY = Math.min(...rooms.map(r => r.y));
@@ -434,7 +515,7 @@ function normalizePlan(obj) {
   }
   return { name: String(obj.name || 'Untitled home').trim().slice(0, 60) || 'Untitled home', rooms, plot, shift: { x: minX, y: minY } };
 }
-const exportPlan = p => { const o = { name: p.name, units: 'm', rooms: p.rooms.map(r => ({ name: r.name, type: r.type, x: r.x, y: r.y, w: r.w, h: r.h })) }; if (p.plot) o.plot = p.plot; return o; };
+const exportPlan = p => { const o = { name: p.name, units: 'm', rooms: p.rooms.map(r => ({ name: r.name, type: r.type, x: r.x, y: r.y, w: r.w, h: r.h, ...finishFields(r) })) }; if (p.plot) o.plot = p.plot; return o; };
 const polyArea = q => Math.abs(q.reduce((s, a, i) => { const c = q[(i + 1) % q.length]; return s + a[0] * c[1] - c[0] * a[1]; }, 0)) / 2;
 function bounds(p) {
   const x0 = Math.min(...p.rooms.map(r => r.x)), y0 = Math.min(...p.rooms.map(r => r.y));
@@ -721,11 +802,16 @@ function setPlan(plan, fit = true) {
   if (booted) { dyn.classList.add('fresh'); clearTimeout(freshTimer); freshTimer = setTimeout(() => dyn.classList.remove('fresh'), 700); }
   changed(); if (fit) view.fit();
 }
-// A discrete change of layout (never a drag) may cross-fade and morph instead of jumping.
+// A change of layout (never a drag, never a change of content) may morph instead of jumping.
+// The browser ignores clicks while a morph runs, so it is kept short and the next press ends it early.
+let morphing = null;
 function morph(fn) {
-  if (booted && document.startViewTransition && !calm.matches && tool.getSnapshot().matches('idle')) { try { document.startViewTransition(fn); return; } catch (e) {} }
+  if (booted && document.startViewTransition && !calm.matches && tool.getSnapshot().matches('idle')) {
+    try { const t = document.startViewTransition(fn); morphing = t; t.finished.finally(() => { if (morphing === t) morphing = null; }); return; } catch (e) {}
+  }
   fn();
 }
+window.addEventListener('pointerdown', () => { if (morphing) morphing.skipTransition(); }, true);
 let pending3d = false;
 function changed(light) {
   state.an = analyze(state.plan);
@@ -751,6 +837,7 @@ function updateRoom(id, patch = {}) {
   if (TYPES[patch.type]) r.type = patch.type;
   for (const k of ['x', 'y']) if (k in patch) r[k] = snap(num(patch[k], r[k]));
   for (const k of ['w', 'h']) if (k in patch) r[k] = clamp(snap(num(patch[k], r[k])), 1, 40);
+  setFinish(r, patch);
   changed(); return true;
 }
 function removeRoom(id) {
@@ -868,7 +955,21 @@ function syncEditor(force) {
   const r = selected(); $('#editor').hidden = !r; if (!r) return;
   const set = (id, v) => { const el = $(id); if (force || document.activeElement !== el) el.value = v; };
   set('#edName', r.name); set('#edType', r.type); set('#edW', r.w); set('#edH', r.h);
+  const f = finishOf(r);
+  set('#edFloor', f.floor); set('#edTile', f.tile || 'none'); set('#edTileTo', f.tileTo); set('#edSpec', r.spec || ''); set('#edPaintPick', f.paint);
+  $('#edTileTo').disabled = !f.tile;
+  document.querySelectorAll('#edPaints .swatch').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.paint === f.paint)));
 }
+$('#edFloor').innerHTML = Object.entries(FINISHES).map(([id, f]) => `<option value="${id}">${f.label}</option>`).join('');
+$('#edTile').innerHTML = '<option value="none">None, painted</option>' + Object.entries(FINISHES).filter(([, f]) => f.wall).map(([id, f]) => `<option value="${id}">${f.label}</option>`).join('');
+$('#edTileTo').innerHTML = TILE_HEIGHTS.map(([v, t]) => `<option value="${v}">${t}</option>`).join('');
+$('#edPaints').innerHTML = PAINTS.map(([c, n]) => `<button type="button" class="swatch" data-paint="${c}" style="background:${c}" title="${n}" aria-label="${n}" aria-pressed="false"></button>`).join('') + '<input type="color" id="edPaintPick" aria-label="Another paint colour">';
+$('#edFloor').addEventListener('change', e => { if (state.sel) updateRoom(state.sel, { floor: e.target.value }); });
+$('#edTile').addEventListener('change', e => { if (state.sel) { updateRoom(state.sel, { tile: e.target.value }); syncEditor(true); } });
+$('#edTileTo').addEventListener('change', e => { if (state.sel) updateRoom(state.sel, { tileTo: e.target.value }); });
+$('#edSpec').addEventListener('input', e => { if (state.sel) updateRoom(state.sel, { spec: e.target.value }); });
+$('#edPaints').addEventListener('click', e => { const b = e.target.closest('.swatch'); if (b && state.sel) { updateRoom(state.sel, { paint: b.dataset.paint }); syncEditor(true); } });
+$('#edPaintPick').addEventListener('input', e => { if (state.sel) { updateRoom(state.sel, { paint: e.target.value }); syncEditor(); } });
 $('#edName').addEventListener('input', e => { if (state.sel) updateRoom(state.sel, { name: e.target.value }); });
 $('#edType').addEventListener('change', e => { if (state.sel) updateRoom(state.sel, { type: e.target.value }); });
 for (const [id, key] of [['#edW', 'w'], ['#edH', 'h']]) $(id).addEventListener('change', e => { const r = selected(); if (r) { updateRoom(r.id, { [key]: e.target.value }); e.target.value = r[key]; } });
@@ -876,7 +977,7 @@ $('#delRoom').addEventListener('click', () => { if (state.sel) removeRoom(state.
 $('#addRoom').addEventListener('click', () => { addRoom(); view.fit(); });
 $('#planName').addEventListener('input', e => { state.plan.name = e.target.value.slice(0, 60) || 'Untitled home'; store.set(exportPlan(state.plan)); if (document.activeElement !== $('#jsonBox')) $('#jsonBox').value = JSON.stringify(exportPlan(state.plan), null, 1); });
 $('#presets').innerHTML = PRESETS.map((p, i) => `<button type="button" class="btn" data-preset="${i}"><span>${p.name}</span><small>${(p.width * p.depth).toFixed(0)} m² · ${p.width} × ${p.depth} m</small></button>`).join('');
-$('#presets').addEventListener('click', e => { const b = e.target.closest('[data-preset]'); if (b) morph(() => setPlan(normalizePlan(PRESETS[+b.dataset.preset]))); });
+$('#presets').addEventListener('click', e => { const b = e.target.closest('[data-preset]'); if (b) setPlan(normalizePlan(PRESETS[+b.dataset.preset])); });
 $('#jsonLoad').addEventListener('click', () => {
   const st = $('#jsonStatus');
   try { setPlan(normalizePlan(JSON.parse($('#jsonBox').value))); st.className = 'status'; st.textContent = 'Plan loaded.'; }
@@ -990,7 +1091,7 @@ $('#zoomBtn').addEventListener('click', () => { state.zoomHome = !state.zoomHome
 
 /* ---------- 3D view ---------- */
 const view = (() => {
-  const canvas = $('#view3d'), noop = { build() {}, fit() {}, resize() {}, setInsets() {}, reframe() {} };
+  const canvas = $('#view3d'), noop = { build() {}, fit() {}, resize() {}, setInsets() {}, reframe() {}, stats: () => ({ skins: 0, tiled: 0 }) };
   if (typeof THREE === 'undefined') { $('#nogl').hidden = false; $('#nogl').textContent = 'The 3D library did not load. Check the connection and reload. The plan still works.'; $('#hint3d').hidden = true; return noop; }
   let renderer;
   try { renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true }); } catch (e) { $('#nogl').hidden = false; $('#hint3d').hidden = true; return noop; }
@@ -1011,19 +1112,17 @@ const view = (() => {
   const glass = new THREE.MeshLambertMaterial({ color: 0xa9d6e6, transparent: true, opacity: 0.32, depthWrite: false });
   const selMat = new THREE.MeshBasicMaterial({ color: 0x1428a0 });
 
-  // floor finishes drawn once into small canvases
-  function rng(seed) { return () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
-  function tex(draw, metres) {
-    const c = document.createElement('canvas'); c.width = c.height = 256; draw(c.getContext('2d'));
-    const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = 4; t.metres = metres; return t;
+  // one texture and one material per finish, made the first time a room uses it
+  const finishMats = {};
+  function finishMat(id) {
+    if (!finishMats[id]) {
+      const c = document.createElement('canvas'); c.width = c.height = 256; FINISHES[id].draw(c.getContext('2d'));
+      const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = 4;
+      finishMats[id] = new THREE.MeshLambertMaterial({ map: t });
+    }
+    return finishMats[id];
   }
-  const finishes = {
-    wood: tex(g => { const r = rng(7); for (let row = 0; row < 8; row++) { let x = -Math.floor(r() * 120); while (x < 256) { const w = 90 + Math.floor(r() * 80), l = 62 + r() * 12; g.fillStyle = `hsl(31 34% ${l}%)`; g.fillRect(x, row * 32, w, 32); g.fillStyle = 'rgba(70,45,20,.28)'; g.fillRect(x, row * 32, 1.5, 32); x += w; } g.fillStyle = 'rgba(70,45,20,.22)'; g.fillRect(0, row * 32, 256, 1.5); } }, 1.6),
-    tileL: tex(g => { g.fillStyle = '#d9d6cf'; g.fillRect(0, 0, 256, 256); g.fillStyle = '#b9b5ac'; for (let i = 0; i < 2; i++) { g.fillRect(i * 128, 0, 3, 256); g.fillRect(0, i * 128, 256, 3); } }, 1.2),
-    tileS: tex(g => { g.fillStyle = '#cfdde2'; g.fillRect(0, 0, 256, 256); g.fillStyle = '#a9bcc4'; for (let i = 0; i < 4; i++) { g.fillRect(i * 64, 0, 2.5, 256); g.fillRect(0, i * 64, 256, 2.5); } }, 1.2),
-    plain: tex(g => { g.fillStyle = '#b9b7b1'; g.fillRect(0, 0, 256, 256); }, 2),
-  };
-  const floorMats = {}; for (const k in finishes) floorMats[k] = new THREE.MeshLambertMaterial({ map: finishes[k] });
+  let stats = { skins: 0, tiled: 0 };
 
   const orbit = { target: new THREE.Vector3(), r: 20, theta: -0.62, phi: 0.82 };
   const inset = { top: 0, right: 0, bottom: 0 }, offset = { x: 0, y: 0 }; // offset: how far the picture is shifted, in pixels, to clear the floating controls
@@ -1066,7 +1165,7 @@ const view = (() => {
   function build() {
     if (!state.plan || !state.an) return;
     if (group) { scene.remove(group); group.traverse(o => { if (o.geometry && o.userData.own) o.geometry.dispose(); }); }
-    group = new THREE.Group(); floors = [];
+    group = new THREE.Group(); floors = []; stats = { skins: 0, tiled: 0 };
     const H = state.cut ? CUT_H : WALL_H, wallMat = mat(0xf2f0eb), capMat = mat(0x2b3742), b = bounds(state.plan);
     const box = (x0, x1, y0, y1, z0, z1, m, cast = true) => {
       const me = new THREE.Mesh(unit, m); me.scale.set(x1 - x0, y1 - y0, z1 - z0); me.position.set((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2);
@@ -1078,7 +1177,7 @@ const view = (() => {
       const land = new THREE.Mesh(g, mat(0x8fae78)); land.position.y = -0.045; land.receiveShadow = true; land.userData.own = true; group.add(land);
     }
     for (const r of state.plan.rooms) {
-      const fm = floorMats[TYPES[r.type].floor], s = fm.map.metres;
+      const fid = finishOf(r).floor, fm = finishMat(fid), s = FINISHES[fid].span;
       const g = new THREE.PlaneGeometry(r.w, r.h).rotateX(-Math.PI / 2).translate(r.x + r.w / 2, 0, r.y + r.h / 2), pos = g.attributes.position, uv = g.attributes.uv;
       for (let i = 0; i < pos.count; i++) uv.setXY(i, pos.getX(i) / s, pos.getZ(i) / s);
       const me = new THREE.Mesh(g, fm); me.receiveShadow = true; me.userData = { own: true, room: r.id }; group.add(me); floors.push(me);
@@ -1086,9 +1185,27 @@ const view = (() => {
     for (const p of state.an.pieces) {
       const half = (p.ext ? 0.2 : 0.1) / 2;
       const slab = (t0, t1, y0, y1, m, hw = half) => p.axis === 'h' ? box(t0, t1, y0, y1, p.c - hw, p.c + hw, m) : box(p.c - hw, p.c + hw, y0, y1, t0, t1, m);
+      // Each side of a wall belongs to the room it faces. A side gets a thin skin when that room is painted or tiled.
+      const sides = (p.ext ? [[p.inw, p.a]] : [[p.bPlus ? 1 : -1, p.b], [p.bPlus ? -1 : 1, p.a]]).map(([sign, room]) => ({ sign, f: finishOf(room) })).filter(q => q.f.tile || q.f.paint !== PAINT);
+      const skin = (sign, t0, t1, y0, y1, m, span) => {
+        if (y1 - y0 < 0.002 || t1 - t0 < 0.002) return;
+        const o = p.c + sign * (half + 0.004), P = p.axis === 'h' ? [[t0, y0, o], [t1, y0, o], [t1, y1, o], [t0, y1, o]] : [[o, y0, t0], [o, y0, t1], [o, y1, t1], [o, y1, t0]];
+        const flip = (p.axis === 'h') !== (sign > 0); // keep the front of the skin facing into its room
+        const g = new THREE.BufferGeometry();
+        g.setAttribute('position', new THREE.Float32BufferAttribute(P.flat(), 3));
+        g.setAttribute('uv', new THREE.Float32BufferAttribute([t0, y0, t1, y0, t1, y1, t0, y1].map(v => v / span), 2));
+        g.setIndex(flip ? [0, 2, 1, 0, 3, 2] : [0, 1, 2, 0, 2, 3]); g.computeVertexNormals();
+        const me = new THREE.Mesh(g, m); me.receiveShadow = true; me.userData.own = true; group.add(me); stats.skins++;
+      };
       const seg = (t0, t1, y0, y1) => {
         y1 = Math.min(y1, H); if (y1 - y0 < 0.002 || t1 - t0 < 0.002) return;
         slab(t0, t1, y0, y1, wallMat); if (y1 >= H - 1e-6) slab(t0, t1, y1, y1 + 0.012, capMat).castShadow = false;
+        const a = Math.max(t0, p.t0), b2 = Math.min(t1, p.t1); // the skin stops at the room's corner, not inside the next wall
+        for (const { sign, f } of sides) {
+          const top = f.tile ? (f.tileTo ? Math.min(f.tileTo, y1) : y1) : y0; // tiles reach `top`, paint carries on above
+          if (f.tile && top > y0) { skin(sign, a, b2, y0, top, finishMat(f.tile), FINISHES[f.tile].span); stats.tiled++; }
+          if (f.paint !== PAINT) skin(sign, a, b2, Math.max(y0, top), y1, mat(new THREE.Color(f.paint).getHex()), 1);
+        }
       };
       let cur = p.t0 - half;
       for (const o of [...p.openings].sort((a, c) => a.t0 - c.t0)) {
@@ -1188,7 +1305,7 @@ const view = (() => {
     if (dirty) { dirty = false; renderer.render(scene, camera); }
   })();
   theme();
-  return { build, fit() { resize(); fit(); }, resize, setInsets(i) { Object.assign(inset, i); }, reframe() { if (framed) { resize(); fit(); } } };
+  return { build, fit() { resize(); fit(); }, resize, setInsets(i) { Object.assign(inset, i); }, reframe() { if (framed) { resize(); fit(); } }, stats: () => stats };
 })();
 
 /* ---------- uploaded drawing ---------- */
@@ -1597,7 +1714,8 @@ const api = {
     selection: state.sel,
     drawing: under.url ? { name: under.name, widthM: Math.round(under.w * under.mpp * 100) / 100, page: drawing.getSnapshot().context.page, pages: drawing.getSnapshot().context.pages } : null,
   }),
-  getPlan: () => ({ name: state.plan.name, units: 'm', rooms: state.plan.rooms.map(r => ({ id: r.id, name: r.name, type: r.type, x: r.x, y: r.y, w: r.w, h: r.h })), plot: state.plan.plot || null }),
+  getPlan: () => ({ name: state.plan.name, units: 'm', rooms: state.plan.rooms.map(r => ({ id: r.id, name: r.name, type: r.type, x: r.x, y: r.y, w: r.w, h: r.h, ...finishFields(r), finish: finishOf(r) })), plot: state.plan.plot || null }),
+  finishes: () => Object.entries(FINISHES).map(([id, f]) => ({ id, label: f.label, wall: !!f.wall })),
   loadPlan: json => { setPlan(normalizePlan(json)); return api.getPlan(); },
   roomTypes: () => Object.keys(TYPES),
   addRoom, updateRoom, removeRoom,
@@ -1646,6 +1764,6 @@ setPlan(first || normalizePlan(PRESETS[2]));
 if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { layoutPanel(); });
 refract($('#titleBar')); refract($('#viewBar'));
 booted = true;
-window.__roomlines = { state, under, analyze, furnish, normalizePlan, setPlan, applyReading, handleFile, PRESETS }; // internals, for the tests only
+window.__roomlines = { state, under, view, analyze, furnish, normalizePlan, setPlan, applyReading, handleFile, PRESETS }; // internals, for the tests only
 })();
 </script>

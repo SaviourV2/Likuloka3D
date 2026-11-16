@@ -14,6 +14,7 @@ A floor plan editor that runs in one HTML page. You draw rooms as rectangles on 
 - Walls come from the room edges. Two rooms that share an edge get an interior wall between them.
 - Doors are placed so that every room can be reached from the entry room, going through the hallway first, then the living room. Living, kitchen and dining rooms that touch get a wide opening instead of a door.
 - Each room gets windows on its outside walls, and the entry room gets a front door.
+- Each room has a floor finish, a wall paint colour and an optional wall tile, set in the room editor. In the 3D view every side of a wall shows the finish of the room it faces.
 - Furniture is placed by room use: a bed and wardrobe in a bedroom, a counter run and table in a kitchen, and so on. Pieces keep clear of doors, and tall pieces keep clear of windows.
 - The 3D view orbits with a drag, zooms with the wheel or a pinch, and pans with a right-drag or two fingers. Clicking a floor selects that room.
 
@@ -60,6 +61,18 @@ The "Plan data" box reads and writes this JSON. All numbers are metres, `x` runs
 
 `type` is one of `living`, `kitchen`, `dining`, `bedroom`, `bathroom`, `office`, `hallway`, `laundry`, `storage` or `studio`. When it is missing, the page guesses from the room name.
 
+A room can also carry its finishes. Each field is optional; without it the room uses the default for its type.
+
+| Field | Values |
+|---|---|
+| `floor` | `oak`, `walnut`, `tile-60`, `tile-60x120`, `tile-30x60`, `tile-20`, `subway`, `subway-green`, `terrazzo`, `concrete` |
+| `paint` | Wall colour as `#rrggbb` |
+| `tile` | Wall tile: any of the tile finishes or `terrazzo`, or `none` for painted walls. Bathrooms default to `tile-30x60`. |
+| `tileTo` | Height the wall tile reaches, in metres. Leave it out for full height. |
+| `spec` | A note of up to 80 characters, for example the product name and code from a supplier |
+
+Tiles and planks are drawn at their real size, for example 60 × 60 cm or 7.5 × 15 cm. The sizes are common trade formats and the patterns are generated in the page; they are not any manufacturer's products. Use `spec` to record which real product a finish stands for.
+
 The box also accepts a nested layout, which cannot produce gaps or overlaps:
 
 ```json
@@ -96,7 +109,7 @@ The drawing fills the window. Everything you operate floats above it as glass: t
 
 Motion is tied to discrete changes and never runs during a drag:
 
-- Switching the view, loading a built-in layout and opening or closing the panel morph with the View Transitions API where the browser has it.
+- Switching the view and opening or closing the panel morph with the View Transitions API where the browser has it. A morph lasts 0.28 s, because the browser ignores clicks while one runs, and the next press ends it early.
 - The camera glides when the model is reframed, until you orbit or zoom yourself.
 - The view switch has a sliding thumb, new rooms pop in, and panel sections rise as they appear.
 - With "reduce motion" turned on, all of it is off and changes apply at once.
@@ -153,6 +166,8 @@ roomlines.loadPlan({ rooms: [{ name: 'Lounge', x: 0, y: 0, w: 5, h: 4 }] })
 
 const id = roomlines.addRoom({ name: 'Office', type: 'office', x: 5, y: 0, w: 3, h: 3 })
 roomlines.updateRoom(id, { w: 4 })       // values snap to the 0.25 m grid
+roomlines.updateRoom(id, { floor: 'walnut', paint: '#3d4a5c', tile: 'subway', tileTo: 1.2 })
+roomlines.finishes()                     // [{ id, label, wall }]; null resets a finish to its default
 roomlines.removeRoom(id)
 roomlines.select(id)
 roomlines.setView({ mode: '3d', furniture: false, cut: true, panel: 'closed' })

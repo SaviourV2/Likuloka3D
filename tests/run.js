@@ -239,6 +239,39 @@ function fakeClaude() {
     await close();
   }
 
+  // ---------- 4b. finishes: floor, wall paint and wall tile per room
+  {
+    const { page, errors, close } = await open();
+    const r = await page.evaluate(() => {
+      const R = window.roomlines, V = window.__roomlines.view, rooms = R.getPlan().rooms, by = n => R.getPlan().rooms.find(q => q.name === n);
+      const out = { defaults: `${by('Living room').finish.floor}/${by('Living room').finish.tile || '-'} ${by('Bathroom').finish.floor}/${by('Bathroom').finish.tile}`, stored: Object.keys(rooms[0]).includes('floor'), base: V.stats() };
+      const living = by('Living room').id, kitchen = by('Kitchen').id;
+      R.updateRoom(living, { floor: 'walnut', paint: '#3D4A5C', spec: 'Navy feature wall' });
+      R.updateRoom(kitchen, { tile: 'subway', tileTo: 1.2 });
+      R.updateRoom(kitchen, { floor: 'not-a-finish', paint: 'red', tile: 'oak', tileTo: 99 }); // every one of these is invalid
+      out.living = by('Living room'); out.kitchen = by('Kitchen');
+      return out;
+    });
+    check('rooms start with their type\'s finishes, and a bathroom is tiled', r.defaults === 'oak/- tile-20/tile-30x60' && !r.stored && r.base.tiled > 0, r.defaults);
+    check('floor, paint, tile and a note can be set per room', r.living.floor === 'walnut' && r.living.paint === '#3d4a5c' && r.living.spec === 'Navy feature wall' && r.kitchen.finish.tile === 'subway' && r.kitchen.finish.tileTo === 1.2, [r.living, r.kitchen]);
+    check('invalid finishes are ignored and leave the room as it was', r.kitchen.floor === undefined && r.kitchen.paint === undefined && r.kitchen.tile === 'subway' && r.kitchen.tileTo === 1.2 && r.kitchen.finish.floor === 'tile-60', r.kitchen);
+    const reset = await page.evaluate(() => { const R = window.roomlines, k = R.getPlan().rooms.find(q => q.name === 'Kitchen').id; R.updateRoom(k, { tile: null, tileTo: null }); return R.getPlan().rooms.find(q => q.name === 'Kitchen'); });
+    check('null puts a finish back to the default', reset.tile === undefined && reset.tileTo === undefined && reset.finish.tile === '', reset);
+    await page.waitForTimeout(300);
+    const after = await page.evaluate(() => window.__roomlines.view.stats());
+    check('painted and tiled walls are drawn in 3D', after.skins > r.base.skins, [r.base, after]);
+    const saved = await page.evaluate(() => { const R = window.roomlines, json = JSON.stringify(JSON.parse(document.querySelector('#jsonBox').value)); const again = R.loadPlan(JSON.parse(json)); return { json, living: again.rooms.find(q => q.name === 'Living room'), old: R.loadPlan({ rooms: [{ name: 'Bath', x: 0, y: 0, w: 2, h: 2 }] }).rooms[0].finish }; });
+    check('finishes survive saving and loading, and old plans still load', /"floor":"walnut"/.test(saved.json) && saved.living.paint === '#3d4a5c' && saved.living.spec === 'Navy feature wall' && saved.old.tile === 'tile-30x60', saved);
+    await page.click('[data-preset="2"]'); await page.waitForTimeout(500);
+    const box = await page.locator('[data-room]').nth(3).boundingBox(); await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+    await page.selectOption('#edFloor', 'terrazzo'); await page.click('#edPaints .swatch[data-paint="#cfd8d3"]'); await page.selectOption('#edTile', 'tile-60x120'); await page.selectOption('#edTileTo', '0.9'); await page.fill('#edSpec', 'Sample tile 60x120');
+    const ed = await page.evaluate(() => window.roomlines.getPlan().rooms[3]);
+    check('the editor sets finishes on the selected room', ed.floor === 'terrazzo' && ed.paint === '#cfd8d3' && ed.tile === 'tile-60x120' && ed.tileTo === 0.9 && ed.spec === 'Sample tile 60x120' && await page.getAttribute('#edPaints .swatch[data-paint="#cfd8d3"]', 'aria-pressed') === 'true', ed);
+    await page.selectOption('#edTile', 'none');
+    check('choosing no tile turns the height off', await page.locator('#edTileTo').isDisabled() && await page.evaluate(() => window.roomlines.getPlan().rooms[3].finish.tile) === '' && errors.length === 0, errors);
+    await close();
+  }
+
   // ---------- 5. phone layout, and a missing library
   {
     const { page, errors, close } = await open({ claude: true, viewport: { width: 400, height: 800 } });
