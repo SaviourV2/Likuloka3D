@@ -4,9 +4,9 @@
  * is what dirty tracking and undo rely on. Invalid input throws a SceneError.
  */
 import {
-  GRID, MIN_WALL, ROOM_TYPES,
-  type BuildingNode, type Id, type LevelNode, type NodeOf, type NodeType, type RoomType,
-  type SceneDoc, type SceneNode, type SlabNode, type Vec2, type WallNode, type ZoneNode,
+  GRID, MIN_WALL, OPENING_DEFAULTS, OPENING_MARGIN, ROOM_TYPES,
+  type BuildingNode, type Id, type LevelNode, type NodeOf, type NodeType, type OpeningKind, type OpeningNode,
+  type RoomType, type SceneDoc, type SceneNode, type SlabNode, type Vec2, type WallNode, type ZoneNode,
 } from './types';
 
 export class SceneError extends Error {
@@ -140,6 +140,7 @@ function wallFrom(level: LevelNode, input: WallInput, id: Id, prev?: WallNode): 
   if (Math.hypot(b[0] - a[0], b[1] - a[1]) < MIN_WALL - 1e-6) throw new SceneError(`A wall must be at least ${MIN_WALL} m long`);
   return {
     id, type: 'wall', parent: level.id,
+    children: prev?.children ?? [],
     name: input.name?.trim() || prev?.name || 'Wall',
     a, b,
     thickness: input.thickness === undefined ? (prev?.thickness ?? 0.2) : positive(input.thickness, 'thickness', 0.05, 1),
@@ -155,19 +156,12 @@ export function addWall(doc: SceneDoc, levelId: Id, input: WallInput, id = newId
 export function updateWall(doc: SceneDoc, id: Id, patch: Partial<WallInput>): SceneDoc {
   const wall = get(doc, id, 'wall');
   const level = get(doc, wall.parent, 'level');
-  return put(doc, wallFrom(level, { ...wall, ...patch }, id, wall));
+  const next = put(doc, wallFrom(level, { ...wall, ...patch }, id, wall));
+  return reanchor(doc, next, [id]);
 }
 
-/**
- * Moves one end of a wall. Every other wall on the level whose end sat on the
- * same point moves with it, so joined walls stay joined.
- */
-export function moveWallEnd(doc: SceneDoc, id: Id, end: 'a' | 'b', to: Vec2): SceneDoc {
-  const wall = get(doc, id, 'wall');
-  const from = wall[end];
-  const target = point(to, end);
-  if (samePoint(from, target)) return doc;
-  const level = get(doc, wall.parent, 'level');
+/** Moves every wall end on the level that sits on `from`, without touching openings. */
+function moveEnds(doc: SceneDoc, level: LevelNode, from: Vec2, target: Vec2, moved: Set<Id>): SceneDoc {
   const changed: SceneNode[] = [];
   for (const childId of level.children) {
     const n = doc.nodes[childId];
@@ -178,8 +172,24 @@ export function moveWallEnd(doc: SceneDoc, id: Id, end: 'a' | 'b', to: Vec2): Sc
     if (next === n) continue;
     if (Math.hypot(next.b[0] - next.a[0], next.b[1] - next.a[1]) < MIN_WALL - 1e-6) throw new SceneError(`A wall must be at least ${MIN_WALL} m long`);
     changed.push(next);
+    moved.add(n.id);
   }
   return put(doc, ...changed);
+}
+
+/**
+ * Moves one end of a wall. Every other wall on the level whose end sat on the
+ * same point moves with it, so joined walls stay joined. Doors and windows in
+ * the walls that changed keep their place in the room.
+ */
+export function moveWallEnd(doc: SceneDoc, id: Id, end: 'a' | 'b', to: Vec2): SceneDoc {
+  const wall = get(doc, id, 'wall');
+  const from = wall[end];
+  const target = point(to, end);
+  if (samePoint(from, target)) return doc;
+  const moved = new Set<Id>();
+  const next = moveEnds(doc, get(doc, wall.parent, 'level'), from, target, moved);
+  return reanchor(doc, next, moved);
 }
 
 /**
@@ -198,10 +208,136 @@ export function offsetWall(doc: SceneDoc, id: Id, offset: number): SceneDoc {
   const a2 = shift(wall.a);
   const b2 = shift(wall.b);
   if (samePoint(a2, wall.a) && samePoint(b2, wall.b)) return doc;
-  // Move b first while a still identifies the wall's other joints.
-  let next = moveWallEnd(doc, id, 'b', b2);
-  next = moveWallEnd(next, id, 'a', a2);
-  return next;
+  // Move b first while a still identifies the wall's other joints, then
+  // place openings once, against the walls as they were before.
+  const level = get(doc, wall.parent, 'level');
+  const moved = new Set<Id>();
+  let next = moveEnds(doc, level, wall.b, b2, moved);
+  next = moveEnds(next, get(next, level.id, 'level'), wall.a, a2, moved);
+  return reanchor(doc, next, moved);
+}
+
+// ---- doors and windows -----------------------------------------------------------
+
+const wallLength = (w: WallNode) => Math.hypot(w.b[0] - w.a[0], w.b[1] - w.a[1]);
+const openingsOf = (doc: SceneDoc, w: WallNode) => w.children.map(c => doc.nodes[c]).filter((n): n is OpeningNode => n?.type === 'opening');
+
+/** Throws unless every opening fits inside the wall and clear of the others. */
+function checkFits(wall: WallNode, openings: readonly OpeningNode[]) {
+  const len = wallLength(wall);
+  const sorted = [...openings].sort((p, q) => p.offset - q.offset);
+  let end = 0;
+  for (const o of sorted) {
+    const what = o.kind === 'door' ? 'door' : 'window';
+    if (o.sill + o.height > wall.height + 1e-6) throw new SceneError(`The ${what} is taller than the wall`);
+    if (o.offset - o.width / 2 < OPENING_MARGIN - 1e-6 || o.offset + o.width / 2 > len - OPENING_MARGIN + 1e-6) {
+      throw new SceneError(`The ${what} does not fit in the wall`);
+    }
+    if (o.offset - o.width / 2 < end - 1e-6) throw new SceneError(`The ${what} overlaps another opening`);
+    end = o.offset + o.width / 2 + OPENING_MARGIN;
+  }
+}
+
+/**
+ * After walls change, keeps each of their openings at the same point in the
+ * room: the opening's centre on the old wall is projected onto the new one.
+ */
+function reanchor(before: SceneDoc, after: SceneDoc, walls: Iterable<Id>): SceneDoc {
+  const changed: SceneNode[] = [];
+  for (const id of walls) {
+    const old = before.nodes[id];
+    const now = after.nodes[id];
+    if (old?.type !== 'wall' || now?.type !== 'wall') continue;
+    const oldLen = wallLength(old);
+    const len = wallLength(now);
+    const ux = (now.b[0] - now.a[0]) / len, uy = (now.b[1] - now.a[1]) / len;
+    const placed = openingsOf(after, now).map(o => {
+      const t = o.offset / oldLen;
+      const cx = old.a[0] + (old.b[0] - old.a[0]) * t;
+      const cy = old.a[1] + (old.b[1] - old.a[1]) * t;
+      const offset = snapOffset((cx - now.a[0]) * ux + (cy - now.a[1]) * uy);
+      return offset === o.offset ? o : { ...o, offset };
+    });
+    checkFits(now, placed);
+    placed.forEach((o, i) => { if (o !== openingsOf(after, now)[i]) changed.push(o); });
+  }
+  return changed.length ? put(after, ...changed) : after;
+}
+
+const snapOffset = (v: number) => Math.round(v / (GRID / 2)) * (GRID / 2);
+
+export interface OpeningInput { kind: OpeningKind; offset: number; width?: number; height?: number; sill?: number; name?: string }
+
+function openingFrom(wall: WallNode, input: OpeningInput, id: Id, prev?: OpeningNode): OpeningNode {
+  if (input.kind !== 'door' && input.kind !== 'window') throw new SceneError('An opening is a door or a window');
+  const d = OPENING_DEFAULTS[input.kind];
+  const kindChanged = prev && prev.kind !== input.kind;
+  const pick = (v: number | undefined, fallback: number) => (v === undefined ? fallback : v);
+  const width = positive(pick(input.width, kindChanged ? d.width : (prev?.width ?? d.width)), 'width', GRID, 10);
+  const height = positive(pick(input.height, kindChanged ? d.height : (prev?.height ?? d.height)), 'height', 0.3, 10);
+  const sillIn = pick(input.sill, kindChanged ? d.sill : (prev?.sill ?? d.sill));
+  const sill = Math.round(finite(sillIn, 'sill') * 100) / 100;
+  if (sill < 0) throw new SceneError('sill cannot be below the floor');
+  return {
+    id, type: 'opening', parent: wall.id, kind: input.kind,
+    name: input.name?.trim() || (kindChanged || !prev ? (input.kind === 'door' ? 'Door' : 'Window') : prev.name),
+    offset: snapOffset(finite(input.offset, 'offset')),
+    width: Math.round(width / GRID) * GRID || GRID,
+    height, sill,
+  };
+}
+
+export function addOpening(doc: SceneDoc, wallId: Id, input: OpeningInput, id = newId('opening')): [SceneDoc, Id] {
+  const wall = get(doc, wallId, 'wall');
+  const node = openingFrom(wall, input, id);
+  checkFits(wall, [...openingsOf(doc, wall), node]);
+  return [attach(doc, node), id];
+}
+
+/** Adds a door or window centred on the point of the wall nearest to `at`, kept inside the wall. */
+export function addOpeningAt(doc: SceneDoc, wallId: Id, kind: OpeningKind, at: Vec2, input: Partial<OpeningInput> = {}): [SceneDoc, Id] {
+  const wall = get(doc, wallId, 'wall');
+  const len = wallLength(wall);
+  const width = input.width ?? OPENING_DEFAULTS[kind].width;
+  const ux = (wall.b[0] - wall.a[0]) / len, uy = (wall.b[1] - wall.a[1]) / len;
+  const s = (at[0] - wall.a[0]) * ux + (at[1] - wall.a[1]) * uy;
+  const lo = width / 2 + OPENING_MARGIN, hi = len - width / 2 - OPENING_MARGIN;
+  if (hi < lo) throw new SceneError(`This wall is too short for a ${kind}`);
+  let offset = snapOffset(Math.min(hi, Math.max(lo, s)));
+  if (offset < lo) offset += GRID / 2;
+  if (offset > hi) offset -= GRID / 2;
+  return addOpening(doc, wallId, { ...input, kind, offset, width });
+}
+
+export function updateOpening(doc: SceneDoc, id: Id, patch: Partial<OpeningInput>): SceneDoc {
+  const o = get(doc, id, 'opening');
+  const wall = get(doc, o.parent, 'wall');
+  // A door turned into a window (or back) takes that kind's height and sill, and keeps its place and width.
+  const base: OpeningInput = patch.kind && patch.kind !== o.kind ? { kind: patch.kind, offset: o.offset, width: o.width } : o;
+  const next = openingFrom(wall, { ...base, ...patch }, id, o);
+  if (next.kind === o.kind && next.offset === o.offset && next.width === o.width && next.height === o.height && next.sill === o.sill && next.name === o.name) return doc;
+  checkFits(wall, openingsOf(doc, wall).map(x => (x.id === id ? next : x)));
+  return put(doc, next);
+}
+
+/** Slides an opening along its wall by `delta` metres. */
+export function slideOpening(doc: SceneDoc, id: Id, delta: number): SceneDoc {
+  const o = get(doc, id, 'opening');
+  return updateOpening(doc, id, { offset: o.offset + finite(delta, 'delta') });
+}
+
+/** The wall on a level whose centre line passes through `p`, if any. */
+export function wallAt(doc: SceneDoc, levelId: Id, p: Vec2): WallNode | null {
+  for (const c of get(doc, levelId, 'level').children) {
+    const w = doc.nodes[c];
+    if (w?.type !== 'wall') continue;
+    const len = wallLength(w);
+    const ux = (w.b[0] - w.a[0]) / len, uy = (w.b[1] - w.a[1]) / len;
+    const s = (p[0] - w.a[0]) * ux + (p[1] - w.a[1]) * uy;
+    const d = Math.abs((p[0] - w.a[0]) * -uy + (p[1] - w.a[1]) * ux);
+    if (s >= -1e-6 && s <= len + 1e-6 && d < 1e-6) return w;
+  }
+  return null;
 }
 
 // ---- zones and slabs -----------------------------------------------------------
@@ -309,7 +445,7 @@ export function remove(doc: SceneDoc, id: Id): SceneDoc {
   };
   drop(id);
   if (node.parent === null) return { nodes, roots: doc.roots.filter(r => r !== id) };
-  const parent = nodes[node.parent] as BuildingNode | LevelNode;
+  const parent = nodes[node.parent] as BuildingNode | LevelNode | WallNode;
   nodes[parent.id] = { ...parent, children: parent.children.filter(c => c !== id) };
   return { nodes, roots: doc.roots };
 }
@@ -338,6 +474,10 @@ export function validate(doc: unknown): SceneDoc {
     seen.add(id);
     if (n.type === 'building') n.children.forEach(c => walk(c, id, ['level']));
     if (n.type === 'level') n.children.forEach(c => walk(c, id, ['wall', 'zone', 'slab']));
+    if (n.type === 'wall') {
+      if (!Array.isArray(n.children)) throw new SceneError(`Broken node ${id}`);
+      n.children.forEach(c => walk(c, id, ['opening']));
+    }
   };
   d.roots.forEach(r => walk(r, null, ['building']));
   if (seen.size !== Object.keys(d.nodes).length) throw new SceneError('The scene has loose nodes');

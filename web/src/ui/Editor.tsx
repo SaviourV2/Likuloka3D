@@ -25,13 +25,47 @@ export function sampleScene(): SceneDoc {
       { name: 'Store', type: 'storage', x: 4.5, y: 0, w: 1.5, h: 3.5 },
     ],
   }, { origin: [15, 1] });
+  // Doors and windows, by a point on the wall each sits in.
+  const [house, studio] = doc.roots.map(r => doc.nodes[r]);
+  const levels = (b: typeof house) => (b.type === 'building' ? b.children : []);
+  const put = (level: string, kind: 'door' | 'window', at: [number, number], extra: Partial<ops.OpeningInput> = {}) => {
+    const wall = ops.wallAt(doc, level, at);
+    if (wall) [doc] = ops.addOpeningAt(doc, wall.id, kind, at, extra);
+  };
+  levels(house).forEach((level, i) => {
+    put(level, i === 0 ? 'door' : 'window', [6.25, 7.75]);
+    put(level, 'door', [5.5, 2.25]);
+    put(level, 'door', [5.5, 6.25]);
+    put(level, 'door', [7, 2]);
+    put(level, 'door', [7, 6]);
+    put(level, 'door', [10.25, 4.25], { width: 0.75 });
+    put(level, 'window', [2.75, 0], { width: 2.5 });
+    put(level, 'window', [0, 6], { width: 1.5 });
+    put(level, 'window', [0, 2.25], { width: 1.5 });
+    put(level, 'window', [9, 0], { width: 1.5 });
+    put(level, 'window', [11, 2], { width: 1.5 });
+    put(level, 'window', [11, 6], { width: 1 });
+    put(level, 'window', [8.25, 7.75], { width: 1, sill: 1.5, height: 0.6 });
+  });
+  for (const level of levels(studio)) {
+    put(level, 'door', [5.25, 3.5]);
+    put(level, 'window', [2.25, 3.5], { width: 2 });
+    put(level, 'window', [6, 1.75], { width: 1 });
+  }
   return doc;
+}
+
+/** Scenes saved before walls could hold openings have walls without `children`. */
+function migrate(raw: unknown): unknown {
+  const doc = raw as { nodes?: Record<string, { type?: string; children?: unknown }> };
+  if (doc?.nodes) for (const n of Object.values(doc.nodes)) if (n?.type === 'wall' && !n.children) n.children = [];
+  return raw;
 }
 
 function readSaved(): SceneDoc | null {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? ops.validate(JSON.parse(raw)) : null;
+    return raw ? ops.validate(migrate(JSON.parse(raw))) : null;
   } catch {
     return null;
   }
@@ -48,9 +82,12 @@ function Toolbar({ onImport }: { onImport: () => void }) {
       <span className="brand"><b>Likuloka</b> 3D</span>
       <div className="segmented" role="radiogroup" aria-label="Tool">
         <button type="button" role="radio" aria-checked={tool === 'select'} data-tool="select" onClick={() => store.setTool('select')}>Select</button>
-        <button type="button" role="radio" aria-checked={tool === 'wall'} data-tool="wall" onClick={() => store.setTool('wall')}>Draw walls</button>
+        <button type="button" role="radio" aria-checked={tool === 'wall'} data-tool="wall" title="Draw walls (W)" onClick={() => store.setTool('wall')}>Draw walls</button>
+        <button type="button" role="radio" aria-checked={tool === 'door'} data-tool="door" title="Add doors (D)" onClick={() => store.setTool('door')}>Door</button>
+        <button type="button" role="radio" aria-checked={tool === 'window'} data-tool="window" title="Add windows (N)" onClick={() => store.setTool('window')}>Window</button>
       </div>
       {tool === 'wall' && <span className="hint">{drawing ? 'Click to add the next wall. Esc ends the run.' : 'Click to start a wall.'}</span>}
+      {(tool === 'door' || tool === 'window') && <span className="hint">Click a wall to add a {tool}. Esc to stop.</span>}
       <span className="spacer" />
       <button type="button" aria-pressed={cut} data-action="cut" title="Cut walls at 1.2 m so rooms can be seen into" onClick={() => store.setCut(!cut)}>Cut walls</button>
       <button type="button" data-action="undo" disabled={!undoLabel} title={undoLabel ? `Undo ${undoLabel}` : 'Nothing to undo'} onClick={() => store.undo()}>Undo</button>
@@ -168,11 +205,16 @@ export default function Editor() {
       else if (mod && k === 'y') { e.preventDefault(); store.redo(); }
       else if (mod) return;
       else if (k === 'escape') {
-        if (editor.getState().tool === 'wall') endChain(); else store.select(null);
+        const tool = editor.getState().tool;
+        if (tool === 'wall') endChain();
+        else if (tool === 'door' || tool === 'window') store.setTool('select');
+        else store.select(null);
       }
       else if (k === 'delete' || k === 'backspace') { if (store.removeSelected()) e.preventDefault(); }
       else if (k === 'v') store.setTool('select');
       else if (k === 'w') store.setTool('wall');
+      else if (k === 'd') store.setTool('door');
+      else if (k === 'n') store.setTool('window');
       else if (k === 'f') import('@/render/Viewport').then(m => m.frame(editor.getState().doc));
       else return;
       rig.invalidate();

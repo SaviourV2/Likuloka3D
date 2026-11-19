@@ -47,7 +47,7 @@ function Systems() {
 
   useFrame((_, dt) => {
     const s = editor.getState();
-    world.step(s.doc, s.views, s.selection, Math.min(dt, 0.1));
+    world.step(s.doc, s.views, s.selection, s.cut, Math.min(dt, 0.1));
     let animating = false;
     for (const l of world.levels.values()) if (l.y !== l.target) { animating = true; break; }
     const pulsing = !world.reducedMotion && !!s.selection && s.doc.nodes[s.selection]?.type === 'zone';

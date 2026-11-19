@@ -35,8 +35,19 @@ function Group({ label, ids, depth }: { label: string; ids: readonly Id[]; depth
   return (
     <details className="group" data-depth={depth}>
       <summary>{label} <span className="count">{ids.length}</span></summary>
-      {ids.map(id => <Row key={id} id={id} depth={depth + 1} />)}
+      {ids.map(id => <WallRows key={id} id={id} depth={depth + 1} />)}
     </details>
+  );
+}
+
+/** A row, and for a wall the rows of its doors and windows under it. */
+function WallRows({ id, depth }: { id: Id; depth: number }) {
+  const openings = useEditor(kids(id));
+  return (
+    <>
+      <Row id={id} depth={depth} />
+      {openings.map(o => <Row key={o} id={o} depth={depth + 1} />)}
+    </>
   );
 }
 

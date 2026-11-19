@@ -2,6 +2,7 @@
  * The scene document: a flat table of nodes that form a tree.
  *
  *   building → level → wall | zone | slab
+ *                       wall → opening (door or window)
  *
  * Every node is immutable. An edit replaces only the nodes it touches, so the
  * previous document stays intact (that is what undo keeps) and the set of
@@ -14,7 +15,7 @@
 export type Id = string;
 export type Vec2 = readonly [number, number];
 
-export type NodeType = 'building' | 'level' | 'wall' | 'zone' | 'slab';
+export type NodeType = 'building' | 'level' | 'wall' | 'zone' | 'slab' | 'opening';
 
 interface Base<T extends NodeType> {
   readonly id: Id;
@@ -41,6 +42,8 @@ export interface LevelNode extends Base<'level'> {
 
 export interface WallNode extends Base<'wall'> {
   readonly parent: Id;
+  /** The wall's openings. */
+  readonly children: readonly Id[];
   readonly a: Vec2;
   readonly b: Vec2;
   readonly thickness: number;
@@ -63,7 +66,21 @@ export interface SlabNode extends Base<'slab'> {
   readonly thickness: number;
 }
 
-export type SceneNode = BuildingNode | LevelNode | WallNode | ZoneNode | SlabNode;
+export type OpeningKind = 'door' | 'window';
+
+/** A door or window in a wall. Its place is measured along the wall from end `a`. */
+export interface OpeningNode extends Base<'opening'> {
+  readonly parent: Id;
+  readonly kind: OpeningKind;
+  /** Distance from the wall's end `a` to the opening's centre. */
+  readonly offset: number;
+  readonly width: number;
+  readonly height: number;
+  /** Height of the bottom of the opening above the floor; 0 for a door. */
+  readonly sill: number;
+}
+
+export type SceneNode = BuildingNode | LevelNode | WallNode | ZoneNode | SlabNode | OpeningNode;
 export type NodeOf<T extends NodeType> = Extract<SceneNode, { type: T }>;
 
 export interface SceneDoc {
@@ -76,6 +93,12 @@ export interface SceneDoc {
 export type LevelMode = 'stack' | 'explode' | 'solo';
 
 export const GRID = 0.25;
+/** Openings keep at least this much wall at each end and between each other. */
+export const OPENING_MARGIN = 0.1;
+export const OPENING_DEFAULTS: Record<OpeningKind, { width: number; height: number; sill: number }> = {
+  door: { width: 1, height: 2.1, sill: 0 },
+  window: { width: 1.5, height: 1.2, sill: 0.9 },
+};
 export const MIN_WALL = GRID;
 export const ROOM_TYPES: readonly RoomType[] = [
   'living', 'kitchen', 'dining', 'bedroom', 'bathroom',

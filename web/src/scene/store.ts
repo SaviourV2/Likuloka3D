@@ -11,7 +11,7 @@
 import { createStore } from 'zustand/vanilla';
 import { useStore } from 'zustand';
 import { ancestor, emptyDoc, remove, validate, SceneError } from './ops';
-import type { Id, LevelMode, SceneDoc, Vec2 } from './types';
+import type { Id, LevelMode, OpeningKind, SceneDoc, Vec2 } from './types';
 
 export const HISTORY_LIMIT = 200;
 
@@ -20,10 +20,12 @@ export interface Step { doc: SceneDoc; label: string }
 /** What the pointer is doing. One value instead of a flag per mode. */
 export type Interaction =
   | { kind: 'idle' }
-  | { kind: 'dragging'; target: Id; what: 'wall' | 'wall-end' | 'point' | 'insert' | 'zone' }
-  | { kind: 'drawing-wall'; level: Id; from: Vec2 | null; to: Vec2 | null };
+  | { kind: 'dragging'; target: Id; what: 'wall' | 'wall-end' | 'point' | 'insert' | 'zone' | 'opening' }
+  | { kind: 'drawing-wall'; level: Id; from: Vec2 | null; to: Vec2 | null }
+  /** A click on a wall puts a door or window there. */
+  | { kind: 'placing'; what: OpeningKind };
 
-export type Tool = 'select' | 'wall';
+export type Tool = 'select' | 'wall' | 'door' | 'window';
 
 export interface BuildingView { mode: LevelMode; solo: Id | null }
 
@@ -221,7 +223,9 @@ export function setTool(tool: Tool) {
   const level = s.activeLevel;
   set({
     tool,
-    interaction: tool === 'wall' && level ? { kind: 'drawing-wall', level, from: null, to: null } : { kind: 'idle' },
+    interaction: tool === 'wall' && level ? { kind: 'drawing-wall', level, from: null, to: null }
+      : tool === 'door' || tool === 'window' ? { kind: 'placing', what: tool }
+      : { kind: 'idle' },
   });
 }
 

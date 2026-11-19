@@ -38,7 +38,8 @@ Roomlines, a floor plan editor with a 3D view. `README.md` documents the plan fo
 - It is a static export (`output: 'export'`). Do not add server code, API routes or anything that needs a Node server.
 - Packages are installed from npm and pinned to exact versions.
 - The scene document is immutable. Change it only through the operations in `src/scene/ops.ts`, called through `commit` or a gesture (`begin`, `preview`, `end`) in `src/scene/store.ts`. Never mutate a node: dirty tracking and undo both depend on a changed node having a new identity.
-- Components must not subscribe to node data that a system draws (wall ends, outlines). Systems in `src/ecs/world.ts` update those objects; React only mounts and unmounts them.
+- Openings are children of walls and measured along them from end `a`. Any operation that moves wall ends must re-anchor the openings in the walls it changes (`reanchor` in `ops.ts`) so they keep their place in the room.
+- Components must not subscribe to node data that a system draws (wall ends, outlines, openings). Systems in `src/ecs/world.ts` update those objects; React only mounts and unmounts them.
 - Pointer modes are values of `interaction` in the store. Add a value for a new mode; do not add a boolean flag. Plain settings, such as `cut`, are plain values.
 - Selection, tools, level modes and `cut` are view state and are not undone.
 - The look follows likuloka.com, as above: cobalt `--accent`, Archivo, JetBrains Mono for figures, and `--crit` for errors and destructive actions.

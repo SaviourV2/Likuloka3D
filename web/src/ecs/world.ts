@@ -5,28 +5,33 @@
  * document plus the three.js object React mounted for them. Systems run once
  * per frame, in order, and only touch entities in the dirty set:
  *
- *   transformSystem   walls: one matrix per dirty wall on a shared unit box
+ *   wallSystem        walls: a few boxes per dirty wall, cut around its doors
+ *                     and windows, all sharing one unit box geometry
+ *   openingSystem     doors and windows: frame, leaf or glass, as boxes
  *   outlineSystem     slabs and zones: rebuild the dirty outlines' buffers
  *   layoutSystem      buildings and levels: stack, explode or solo, eased
  *   selectionSystem   swaps the material of the old and new selection
  *
  * The dirty set is fed by diffing documents: an edit replaces only the nodes
  * it touches, so a node is dirty exactly when its object identity changed.
+ * Dependencies are added before the systems run: a dirty opening makes its
+ * wall dirty (the wall's pieces are cut around it), and a wall whose
+ * thickness changed makes its openings dirty (their frames span the wall).
  * React mounts and unmounts entities when a parent's `children` change; it
  * does not re-render when a wall moves, because no component reads wall data.
  */
 import * as THREE from 'three/webgpu';
 import { ancestor } from '@/scene/ops';
 import type { BuildingView } from '@/scene/store';
-import type { Id, NodeType, SceneDoc, SlabNode, Vec2, WallNode, ZoneNode } from '@/scene/types';
-import { materials, UNIT_BOX } from './materials';
+import type { Id, NodeType, OpeningNode, SceneDoc, SlabNode, Vec2, WallNode, ZoneNode } from '@/scene/types';
+import { CUT, materials, UNIT_BOX } from './materials';
 
 export interface Entity { id: Id; kind: NodeType; object: THREE.Object3D }
 
 export interface Stats {
   frames: number;
   /** Updates per kind since the page loaded. */
-  updates: Record<'wall' | 'zone' | 'slab' | 'layout' | 'selection', number>;
+  updates: Record<'wall' | 'opening' | 'zone' | 'slab' | 'layout' | 'selection', number>;
   /** Ids each system updated in the most recent frame that updated anything. */
   last: { frame: number; ids: Id[] };
 }
@@ -40,8 +45,12 @@ class World {
   readonly levels = new Map<Id, { y: number; target: number; visible: boolean }>();
   selected: Id | null = null;
   reducedMotion = false;
-  stats: Stats = { frames: 0, updates: { wall: 0, zone: 0, slab: 0, layout: 0, selection: 0 }, last: { frame: 0, ids: [] } };
+  stats: Stats = { frames: 0, updates: { wall: 0, opening: 0, zone: 0, slab: 0, layout: 0, selection: 0 }, last: { frame: 0, ids: [] } };
+  /** Whether walls are cut at the section height. */
+  cut = true;
   private layoutDirty = true;
+  /** Each wall's thickness when it was last built, to know when its openings need rebuilding. */
+  private thickness = new Map<Id, number>();
 
   register(id: Id, kind: NodeType, object: THREE.Object3D) {
     object.userData.id = id;
@@ -56,6 +65,7 @@ class World {
     if (mesh.isMesh && mesh.geometry !== UNIT_BOX) mesh.geometry.dispose();
     this.entities.delete(id);
     this.levels.delete(id);
+    this.thickness.delete(id);
   }
 
   markDirty(ids: Iterable<Id>) {
@@ -64,28 +74,57 @@ class World {
   }
 
   /** Runs every system once. Returns the ids updated this frame. */
-  step(doc: SceneDoc, views: Record<Id, BuildingView>, selection: Id | null, dt: number): Id[] {
+  step(doc: SceneDoc, views: Record<Id, BuildingView>, selection: Id | null, cut: boolean, dt: number): Id[] {
     this.stats.frames++;
     const touched: Id[] = [];
+    if (cut !== this.cut) {
+      // Which pieces sit wholly above the cut changes, so every wall and opening is rebuilt.
+      this.cut = cut;
+      for (const e of this.entities.values()) if (e.kind === 'wall' || e.kind === 'opening') this.dirty.add(e.id);
+    }
     if (this.dirty.size) {
+      const work = new Set(this.dirty);
       for (const id of this.dirty) {
+        const node = doc.nodes[id];
+        if (node?.type === 'opening') work.add(node.parent);
+        if (node?.type === 'wall' && this.thickness.get(id) !== node.thickness) node.children.forEach(c => work.add(c));
+      }
+      this.dirty.clear();
+      for (const id of work) {
         const node = doc.nodes[id];
         const entity = this.entities.get(id);
         if (!node || !entity) continue;
-        if (node.type === 'wall') { wallTransform(entity.object as THREE.Mesh, node); this.stats.updates.wall++; touched.push(id); }
-        else if (node.type === 'slab') { slabGeometry(entity.object as THREE.Mesh, node); this.stats.updates.slab++; touched.push(id); }
-        else if (node.type === 'zone') { zoneGeometry(entity.object as THREE.Mesh, node); this.stats.updates.zone++; touched.push(id); }
-        else if (node.type === 'building') { entity.object.position.set(node.origin[0], 0, node.origin[1]); touched.push(id); }
-        if (node.type === 'wall' || node.type === 'zone' || node.type === 'slab') paint(entity.object as THREE.Mesh, node.type, node, id === selection);
+        const selected = id === selection;
+        if (node.type === 'wall') {
+          buildWall(entity.object, node, openingsOf(doc, node), this.cut, selected);
+          this.thickness.set(id, node.thickness);
+          this.stats.updates.wall++;
+        } else if (node.type === 'opening') {
+          const wall = doc.nodes[node.parent];
+          if (wall?.type !== 'wall') continue;
+          buildOpening(entity.object, node, wall, this.cut, selected);
+          this.stats.updates.opening++;
+        } else if (node.type === 'slab') {
+          slabGeometry(entity.object as THREE.Mesh, node);
+          paintOutline(entity.object as THREE.Mesh, node, selected);
+          this.stats.updates.slab++;
+        } else if (node.type === 'zone') {
+          zoneGeometry(entity.object as THREE.Mesh, node);
+          paintOutline(entity.object as THREE.Mesh, node, selected);
+          this.stats.updates.zone++;
+        } else if (node.type === 'building') {
+          entity.object.position.set(node.origin[0], 0, node.origin[1]);
+        } else continue;
+        touched.push(id);
       }
-      this.dirty.clear();
     }
     if (this.layout(doc, views, dt)) { this.stats.updates.layout++; }
     if (this.selected !== selection) {
       for (const id of [this.selected, selection]) {
         const node = id ? doc.nodes[id] : undefined;
         const entity = id ? this.entities.get(id) : undefined;
-        if (node && entity && (node.type === 'wall' || node.type === 'zone' || node.type === 'slab')) paint(entity.object as THREE.Mesh, node.type, node, id === selection);
+        if (node && entity) paint(entity.object, node.type, id === selection);
+        if (node?.type === 'zone' || node?.type === 'slab') paintOutline(entity!.object as THREE.Mesh, node, id === selection);
       }
       this.selected = selection;
       this.stats.updates.selection++;
@@ -137,7 +176,7 @@ class World {
   levelY(levelId: Id): number { return this.levels.get(levelId)?.y ?? 0; }
 
   resetStats() {
-    this.stats = { frames: this.stats.frames, updates: { wall: 0, zone: 0, slab: 0, layout: 0, selection: 0 }, last: { frame: this.stats.frames, ids: [] } };
+    this.stats = { frames: this.stats.frames, updates: { wall: 0, opening: 0, zone: 0, slab: 0, layout: 0, selection: 0 }, last: { frame: this.stats.frames, ids: [] } };
   }
 }
 
@@ -145,16 +184,116 @@ export const world = new World();
 
 // ---- per-kind updates -------------------------------------------------------------
 
-/** A wall is the shared unit box, scaled and turned into place: no new geometry. */
-function wallTransform(mesh: THREE.Mesh, w: WallNode) {
+const openingsOf = (doc: SceneDoc, w: WallNode) =>
+  w.children.map(c => doc.nodes[c]).filter((n): n is OpeningNode => n?.type === 'opening').sort((p, q) => p.offset - q.offset);
+
+/** A box in the local space of a wall or opening group: x along the wall, y up from the floor, z across. */
+interface Box { x0: number; x1: number; y0: number; y1: number; depth: number; material: THREE.Material }
+
+const PART = 'part';
+const cutTop = () => (world.cut ? CUT : Infinity);
+
+/**
+ * Picks a box as it is drawn: the shader clamps boxes at the cut, so the ray
+ * is tested against the part of the box below the cut.
+ */
+function cutRaycast(this: THREE.Mesh, raycaster: THREE.Raycaster, out: THREE.Intersection[]) {
+  if (!this.visible) return;
+  const y0 = (this.userData.y0 as number) ?? 0;
+  const top = Math.min(0.5, (cutTop() - y0) / this.scale.y - 0.5);
+  if (top <= -0.5) return;
+  inverse.copy(this.matrixWorld).invert();
+  localRay.copy(raycaster.ray).applyMatrix4(inverse);
+  hitBox.min.set(-0.5, -0.5, -0.5);
+  hitBox.max.set(0.5, top, 0.5);
+  if (!localRay.intersectBox(hitBox, hitAt)) return;
+  const point = hitAt.clone().applyMatrix4(this.matrixWorld);
+  const distance = raycaster.ray.origin.distanceTo(point);
+  if (distance < raycaster.near || distance > raycaster.far) return;
+  out.push({ distance, point, object: this });
+}
+const inverse = new THREE.Matrix4();
+const localRay = new THREE.Ray();
+const hitBox = new THREE.Box3();
+const hitAt = new THREE.Vector3();
+
+/**
+ * Puts a group's boxes in place, reusing its meshes. Every box is the shared
+ * unit cube, scaled: rebuilding a wall uploads matrices, never geometry.
+ */
+function placeBoxes(group: THREE.Object3D, boxes: Box[], cut: boolean) {
+  const parts = group.children.filter(c => c.userData[PART]) as THREE.Mesh[];
+  while (parts.length < boxes.length) {
+    const m = new THREE.Mesh(UNIT_BOX, boxes[0].material);
+    m.userData[PART] = true;
+    m.castShadow = true;
+    m.receiveShadow = true;
+    m.raycast = cutRaycast;
+    group.add(m);
+    parts.push(m);
+  }
+  while (parts.length > boxes.length) group.remove(parts.pop()!);
+  boxes.forEach((b, i) => {
+    const m = parts[i];
+    m.position.set((b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2, 0);
+    m.scale.set(Math.max(b.x1 - b.x0, 1e-3), Math.max(b.y1 - b.y0, 1e-3), b.depth);
+    m.userData.y0 = b.y0;
+    // A box that starts above the cut would collapse to a sheet at the cut; it is hidden instead.
+    m.visible = !(cut && b.y0 >= CUT - 1e-6);
+    m.material = b.material;
+    m.updateMatrix();
+  });
+}
+
+/**
+ * A wall runs along its group's x axis from end `a`. It is built as boxes:
+ * full height between openings, and below and above each opening. Its ends
+ * run on by half the thickness so that corners close.
+ */
+function buildWall(group: THREE.Object3D, w: WallNode, openings: OpeningNode[], cut: boolean, selected: boolean) {
   const dx = w.b[0] - w.a[0];
   const dz = w.b[1] - w.a[1];
   const len = Math.hypot(dx, dz);
-  mesh.position.set((w.a[0] + w.b[0]) / 2, w.height / 2, (w.a[1] + w.b[1]) / 2);
-  mesh.rotation.set(0, -Math.atan2(dz, dx), 0);
-  // Ends run on by half the thickness so that corners close.
-  mesh.scale.set(len + w.thickness, w.height, w.thickness);
-  mesh.updateMatrix();
+  group.position.set(w.a[0], 0, w.a[1]);
+  group.rotation.set(0, -Math.atan2(dz, dx), 0);
+  group.updateMatrix();
+  const material = selected ? materials.wallSelected : materials.wall;
+  const t = w.thickness, H = w.height;
+  const boxes: Box[] = [];
+  let at = -t / 2;
+  for (const o of openings) {
+    const x0 = o.offset - o.width / 2, x1 = o.offset + o.width / 2;
+    const top = Math.min(o.sill + o.height, H);
+    if (x0 > at + 1e-6) boxes.push({ x0: at, x1: x0, y0: 0, y1: H, depth: t, material });
+    if (o.sill > 1e-6) boxes.push({ x0, x1, y0: 0, y1: o.sill, depth: t, material });
+    if (top < H - 1e-6) boxes.push({ x0, x1, y0: top, y1: H, depth: t, material });
+    at = x1;
+  }
+  boxes.push({ x0: at, x1: len + t / 2, y0: 0, y1: H, depth: t, material });
+  placeBoxes(group, boxes, cut);
+}
+
+/** A door is a frame and a leaf; a window is a frame, a sill and a pane of glass. */
+function buildOpening(group: THREE.Object3D, o: OpeningNode, wall: WallNode, cut: boolean, selected: boolean) {
+  group.position.set(o.offset, 0, 0);
+  group.updateMatrix();
+  const f = 0.05;
+  const depth = wall.thickness + 0.02;
+  const w = o.width / 2;
+  const top = Math.min(o.sill + o.height, wall.height);
+  const frame = selected ? materials.partSelected : materials.frame;
+  const boxes: Box[] = [
+    { x0: -w, x1: -w + f, y0: o.sill, y1: top, depth, material: frame },
+    { x0: w - f, x1: w, y0: o.sill, y1: top, depth, material: frame },
+    { x0: -w, x1: w, y0: top - f, y1: top, depth, material: frame },
+  ];
+  if (o.kind === 'door') {
+    boxes.push({ x0: -w + f, x1: w - f, y0: 0, y1: top - f, depth: 0.045, material: selected ? materials.partSelected : materials.door });
+  } else {
+    boxes.push({ x0: -w, x1: w, y0: o.sill, y1: o.sill + f, depth: depth + 0.04, material: frame });
+    boxes.push({ x0: -w + f, x1: w - f, y0: o.sill + f, y1: top - f, depth: 0.02, material: selected ? materials.glassSelected : materials.glass });
+  }
+  placeBoxes(group, boxes, cut);
 }
 
 function shapeOf(points: readonly Vec2[]): THREE.Shape {
@@ -183,8 +322,23 @@ function zoneGeometry(mesh: THREE.Mesh, z: ZoneNode) {
   mesh.updateMatrix();
 }
 
-function paint(mesh: THREE.Mesh, kind: 'wall' | 'zone' | 'slab', node: WallNode | ZoneNode | SlabNode, selected: boolean) {
-  if (kind === 'wall') mesh.material = selected ? materials.wallSelected : materials.wall;
-  else if (kind === 'slab') mesh.material = selected ? materials.slabSelected : materials.slab;
-  else mesh.material = materials.zone((node as ZoneNode).use, selected);
+/** Swaps materials when the selection changes; walls and openings are rebuilt cheaply instead. */
+function paint(object: THREE.Object3D, kind: NodeType, selected: boolean) {
+  if (kind === 'wall') {
+    for (const c of object.children) if (c.userData[PART]) (c as THREE.Mesh).material = selected ? materials.wallSelected : materials.wall;
+  } else if (kind === 'opening') {
+    for (const c of object.children) {
+      if (!c.userData[PART]) continue;
+      const m = c as THREE.Mesh;
+      const glass = m.material === materials.glass || m.material === materials.glassSelected;
+      const leaf = m.material === materials.door || (m.material === materials.partSelected && m.scale.z < 0.05);
+      m.material = glass ? (selected ? materials.glassSelected : materials.glass)
+        : selected ? materials.partSelected : leaf ? materials.door : materials.frame;
+    }
+  }
+}
+
+function paintOutline(mesh: THREE.Mesh, node: ZoneNode | SlabNode, selected: boolean) {
+  if (node.type === 'slab') mesh.material = selected ? materials.slabSelected : materials.slab;
+  else mesh.material = materials.zone(node.use, selected);
 }

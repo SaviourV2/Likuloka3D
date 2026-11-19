@@ -123,6 +123,9 @@ h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: v
 .dot-wall { background: var(--ink); }
 .dot-zone { background: #f0b45a; border-radius: 50%; }
 .dot-slab { background: #b8c2f2; }
+.dot-opening { background: transparent; border: 2px solid var(--ink); border-radius: 2px; }
+.row[data-depth="4"] { padding-left: 28px; }
+.fields > .segmented { justify-self: start; }
 
 .fields { display: grid; gap: 8px; margin: 10px 0 16px; }
 .field { display: grid; grid-template-columns: 84px minmax(0, 1fr) 18px; align-items: center; gap: 8px; }

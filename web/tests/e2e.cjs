@@ -81,6 +81,8 @@ async function ids(page) {
       partition: wallAt(studioLevel, w => w.a[0] === 4.5 && w.b[0] === 4.5).id,
       // The left outside wall: its ends are the ends of the front and back walls.
       leftWall: wallAt(studioLevel, w => w.a[0] === 0 && w.b[0] === 0).id,
+      // The back wall, joined to the left wall, with a door and a window in it.
+      backWall: wallAt(studioLevel, w => w.a[1] === 3.5 && w.b[1] === 3.5).id,
     };
   });
 }
@@ -150,7 +152,13 @@ async function drag(page, level, grab, by, lift = 0) {
     await frames(page);
     stats = await page.evaluate(() => likuloka.stats());
     const left = await node(page, id.leftWall);
-    ok('sliding a wall moves it and stretches the two walls joined to it, nothing else', stats.last.ids.length === 3 && stats.last.ids.includes(id.leftWall) && stats.updates.zone === 0, stats.last);
+    const kinds = await page.evaluate(list => list.map(i => likuloka.getDoc().nodes[i].type), stats.last.ids);
+    ok('sliding a wall moves it and stretches the two walls joined to it, nothing else',
+      kinds.filter(k => k === 'wall').length === 3 && kinds.every(k => k === 'wall' || k === 'opening') && stats.last.ids.includes(id.leftWall) && stats.updates.zone === 0, { ids: stats.last.ids, kinds });
+    const back = await node(page, id.backWall);
+    const backOpenings = await page.evaluate(w => likuloka.getDoc().nodes[w].children.map(c => likuloka.getDoc().nodes[c]), id.backWall);
+    ok('doors and windows in a stretched wall keep their place in the room',
+      backOpenings.map(o => back.a[0] + o.offset).sort((p, q) => p - q).join() === '2.25,5.25', { a: back.a, offsets: backOpenings.map(o => o.offset) });
     ok('the slid wall keeps to the grid', left.a[0] === 0.5 || left.a[0] === -0.5, left);
 
     // ---- undo and redo ------------------------------------------------------------------
@@ -270,6 +278,74 @@ async function drag(page, level, grab, by, lift = 0) {
     ok('a second Escape goes back to select', (await state(page)).tool === 'select');
     await page.keyboard.press('Control+z');
     await page.keyboard.press('Control+z');
+
+    // ---- doors and windows -------------------------------------------------------------------
+    const openings = await page.evaluate(() => {
+      const d = likuloka.getDoc();
+      const os = Object.values(d.nodes).filter(n => n.type === 'opening');
+      return { doors: os.filter(o => o.kind === 'door').length, windows: os.filter(o => o.kind === 'window').length, parents: os.every(o => d.nodes[o.parent].type === 'wall' && d.nodes[o.parent].children.includes(o.id)) };
+    });
+    ok('the sample has doors and windows, each in a wall', openings.doors >= 10 && openings.windows >= 10 && openings.parents, openings);
+    // The back wall holds a window and a door: two runs of full wall, below and above the
+    // window, a run between them, above the door, and the run after it.
+    const pieces = await page.evaluate(w => likuloka.world.entities.get(w).object.children.filter(c => c.userData.part).length, id.backWall);
+    ok('a wall with openings is cut around them', pieces === 6, pieces);
+    ok('parts above the cut are hidden, and shown when the cut is off', await page.evaluate(async w => {
+      const parts = () => likuloka.world.entities.get(w).object.children.filter(c => c.userData.part);
+      const raf = () => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+      const hiddenCut = parts().filter(p => p.userData.y0 >= 1.2).every(p => !p.visible);
+      document.querySelector('[data-action="cut"]').click();
+      await raf();
+      const shownFull = parts().every(p => p.visible);
+      document.querySelector('[data-action="cut"]').click();
+      await raf();
+      return hiddenCut && shownFull;
+    }, id.backWall));
+
+    await page.keyboard.press('d');
+    ok('D picks the door tool', (await state(page)).tool === 'door' && (await state(page)).interaction.kind === 'placing');
+    const before2 = (await state(page)).undo;
+    const wpt = await page.evaluate(i => likuloka.project(i, 0, 2.75, 0.6), id.studioLevel);
+    await page.mouse.click(wpt.x, wpt.y);
+    await frames(page);
+    const placed = await page.evaluate(w => likuloka.getDoc().nodes[w].children.map(c => likuloka.getDoc().nodes[c]), id.leftWall);
+    ok('a click on a wall in the door tool adds a door there', placed.length === 1 && placed[0].kind === 'door' && Math.abs(placed[0].offset - 2.75) <= 0.25, placed);
+    ok('adding a door is one undo step and selects it', (await state(page)).undo === before2 + 1 && (await state(page)).selection === placed[0]?.id);
+    await page.mouse.click(wpt.x, wpt.y);
+    ok('a second door on the same spot is refused', (await state(page)).error && (await page.evaluate(w => likuloka.getDoc().nodes[w].children.length, id.leftWall)) === 1, (await state(page)).error);
+    await page.keyboard.press('Escape');
+    ok('Escape leaves the door tool', (await state(page)).tool === 'select');
+
+    await page.evaluate(() => likuloka.resetStats());
+    await drag(page, id.studioLevel, [0, 2.75], [0, -1], 1);
+    const slid = await node(page, placed[0].id);
+    stats = await page.evaluate(() => likuloka.stats());
+    ok('dragging a door slides it along its wall', slid.offset < placed[0].offset && slid.offset >= placed[0].offset - 1.25, { before: placed[0].offset, after: slid.offset });
+    ok('sliding a door rebuilds only the door and its wall', stats.last.ids.every(i => i === placed[0].id || i === id.leftWall) && stats.updates.zone === 0, stats.last);
+    ok('the door drag is one undo step', (await state(page)).undo === before2 + 2);
+
+    await page.evaluate(i => likuloka.select(i), placed[0].id);
+    await page.locator('.inspector [data-kind="window"]').click();
+    const asWindow = await node(page, placed[0].id);
+    ok('the inspector turns a door into a window with a sill', asWindow.kind === 'window' && asWindow.sill === 0.9 && asWindow.height === 1.2 && asWindow.name === 'Window', asWindow);
+    const tall = await page.evaluate(i => likuloka.commit(d => likuloka.ops.updateOpening(d, i, { height: 5 }), 'Tall'), placed[0].id);
+    ok('an opening taller than its wall is refused', !tall && /taller/.test((await state(page)).error), (await state(page)).error);
+    const tooFar = await page.evaluate(i => likuloka.commit(d => likuloka.ops.updateOpening(d, i, { offset: 3.4 }), 'Far'), placed[0].id);
+    ok('an opening past the end of its wall is refused', !tooFar && /fit/.test((await state(page)).error));
+    await page.keyboard.press('Delete');
+    await frames(page);
+    ok('Delete removes the opening and its wall closes up', await page.evaluate(w =>
+      likuloka.getDoc().nodes[w].children.length === 0 && likuloka.world.entities.get(w).object.children.filter(c => c.userData.part).length === 1, id.leftWall));
+    for (let i = 0; i < 4; i++) await page.keyboard.press('Control+z');
+    ok('undo takes the door back out', (await page.evaluate(w => likuloka.getDoc().nodes[w].children.length, id.leftWall)) === 0 && (await state(page)).undo === before2);
+    const deleteWall = await page.evaluate(w => {
+      const kids = likuloka.getDoc().nodes[w].children;
+      likuloka.commit(d => likuloka.ops.remove(d, w), 'Delete wall');
+      const gone = kids.every(k => !likuloka.getDoc().nodes[k]);
+      likuloka.undo();
+      return gone && kids.every(k => likuloka.getDoc().nodes[k]);
+    }, id.backWall);
+    ok('deleting a wall takes its openings with it, and undo brings them back', deleteWall);
 
     // ---- inspector, delete and the cut -------------------------------------------------------
     await page.evaluate(i => likuloka.select(i), id.partition);

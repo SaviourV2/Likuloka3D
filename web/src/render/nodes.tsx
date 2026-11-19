@@ -12,7 +12,7 @@ import { world } from '@/ecs/world';
 import { CUT, materials, UNIT_BOX } from '@/ecs/materials';
 import { editor, select, useEditor } from '@/scene/store';
 import type { Id, NodeType, SceneNode, Vec2 } from '@/scene/types';
-import { edits, rig, shown, startDrag } from './interact';
+import { edits, placeOpening, rig, shown, startDrag } from './interact';
 
 const EMPTY: readonly Id[] = [];
 
@@ -71,43 +71,46 @@ function Level({ id }: { id: Id }) {
   );
 }
 
-const inverse = new THREE.Matrix4();
-const localRay = new THREE.Ray();
-const box = new THREE.Box3();
-const at = new THREE.Vector3();
-
-/**
- * Picks a wall as it is drawn: the shader cuts walls at the section height,
- * so the ray is tested against the box up to the cut, not the full wall.
- */
-function wallRaycast(this: THREE.Mesh, raycaster: THREE.Raycaster, out: THREE.Intersection[]) {
-  const cut = editor.getState().cut ? CUT : Infinity;
-  const top = Math.min(0.5, cut / this.scale.y - 0.5);
-  inverse.copy(this.matrixWorld).invert();
-  localRay.copy(raycaster.ray).applyMatrix4(inverse);
-  box.min.set(-0.5, -0.5, -0.5);
-  box.max.set(0.5, top, 0.5);
-  if (!localRay.intersectBox(box, at)) return;
-  const point = at.clone().applyMatrix4(this.matrixWorld);
-  const distance = raycaster.ray.origin.distanceTo(point);
-  if (distance < raycaster.near || distance > raycaster.far) return;
-  out.push({ distance, point, object: this });
+/** The pieces of a wall are built by the walls system; React only owns the group and its openings. */
+function Wall({ id }: { id: Id }) {
+  const ref = useEntity<THREE.Group>(id, 'wall');
+  const openings = useEditor(children(id));
+  return (
+    <group
+      ref={ref}
+      matrixAutoUpdate={false}
+      onPointerDown={e => startDrag(e, id, 'wall', 'Move wall', edits.wall(id))}
+      onClick={e => {
+        if (!shown(e.object) || e.delta > 4) return;
+        if (editor.getState().interaction.kind === 'placing') { e.stopPropagation(); placeOpening(id, e.point); return; }
+        // A click on a wall stops at the wall, so it never selects what is behind it.
+        clickSelect(id)(e);
+      }}
+      onPointerOver={e => {
+        if (!shown(e.object)) return;
+        const tool = editor.getState().tool;
+        if (tool === 'select' || tool === 'door' || tool === 'window') { e.stopPropagation(); cursor(tool === 'select' ? 'grab' : 'copy'); }
+      }}
+      onPointerOut={() => cursor('')}
+    >
+      {openings.map(o => <Opening key={o} id={o} />)}
+    </group>
+  );
 }
 
-function Wall({ id }: { id: Id }) {
-  const ref = useEntity<THREE.Mesh>(id, 'wall');
+/** A door or window. A drag slides it along its wall; a click selects it. */
+function Opening({ id }: { id: Id }) {
+  const ref = useEntity<THREE.Group>(id, 'opening');
   return (
-    <mesh
+    <group
       ref={ref}
-      raycast={wallRaycast}
-      geometry={UNIT_BOX}
-      material={materials.wall}
-      castShadow
-      receiveShadow
-      onPointerDown={e => startDrag(e, id, 'wall', 'Move wall', edits.wall(id))}
-      // A click on a wall stops at the wall, so it never selects what is behind it.
+      matrixAutoUpdate={false}
+      onPointerDown={e => {
+        const o = editor.getState().doc.nodes[id];
+        startDrag(e, id, 'opening', o?.type === 'opening' && o.kind === 'door' ? 'Move door' : 'Move window', edits.opening(id));
+      }}
       onClick={clickSelect(id)}
-      onPointerOver={e => { if (shown(e.object) && editor.getState().tool === 'select') { e.stopPropagation(); cursor('grab'); } }}
+      onPointerOver={e => { if (shown(e.object) && editor.getState().tool === 'select') { e.stopPropagation(); cursor('ew-resize'); } }}
       onPointerOut={() => cursor('')}
     />
   );
@@ -204,7 +207,7 @@ function WallPreview({ level }: { level: Id }) {
     <>
       {dot}
       {len > 0 && (
-        <mesh geometry={UNIT_BOX} material={materials.preview}
+        <mesh geometry={UNIT_BOX} material={materials.preview} userData={{ y0: 0 }}
           position={[(i.from[0] + i.to[0]) / 2, height / 2, (i.from[1] + i.to[1]) / 2]}
           rotation={[0, -Math.atan2(dz, dx), 0]}
           scale={[len + 0.2, height, 0.2]} />

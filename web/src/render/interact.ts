@@ -9,7 +9,7 @@ import * as THREE from 'three/webgpu';
 import type { ThreeEvent } from '@react-three/fiber';
 import type { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { world } from '@/ecs/world';
-import { ancestor, addWall, insertPoint, movePoint, moveWallEnd, offsetWall, snapPoint, translate } from '@/scene/ops';
+import { ancestor, addOpeningAt, addWall, insertPoint, movePoint, moveWallEnd, offsetWall, slideOpening, snapPoint, translate } from '@/scene/ops';
 import { begin, cancel, commit, editor, end, preview, select, setInteraction, setTool, type Interaction } from '@/scene/store';
 import type { Id, SceneDoc, Vec2 } from '@/scene/types';
 
@@ -116,7 +116,31 @@ export const edits = {
     return insertPoint(base, id, index, plus([(p[0] + q[0]) / 2, (p[1] + q[1]) / 2], from, to));
   },
   translate: (id: Id): Edit => (base, from, to) => translate(base, id, [to[0] - from[0], to[1] - from[1]]),
+  /** A door or window slides along its wall by the pointer's travel along the wall. */
+  opening: (id: Id): Edit => (base, from, to) => {
+    const o = base.nodes[id];
+    const w = o?.type === 'opening' ? base.nodes[o.parent] : undefined;
+    if (w?.type !== 'wall') return base;
+    const dx = w.b[0] - w.a[0], dy = w.b[1] - w.a[1];
+    const along = ((to[0] - from[0]) * dx + (to[1] - from[1]) * dy) / Math.hypot(dx, dy);
+    return slideOpening(base, id, along);
+  },
 };
+
+/** In the door or window tool, a click on a wall puts one there, centred on the click. */
+export function placeOpening(wallId: Id, worldPoint: THREE.Vector3): boolean {
+  const s = editor.getState();
+  if (s.interaction.kind !== 'placing') return false;
+  const what = s.interaction.what;
+  const level = ancestor(s.doc, wallId, 'level');
+  if (!level) return false;
+  const at = world.toPlan(s.doc, level.id, worldPoint);
+  let made: Id | null = null;
+  const ok = commit(doc => { const [next, id] = addOpeningAt(doc, wallId, what, at); made = id; return next; }, what === 'door' ? 'Add door' : 'Add window');
+  if (ok && made) select(made);
+  rig.invalidate();
+  return ok;
+}
 
 // ---- the wall tool ------------------------------------------------------------------
 

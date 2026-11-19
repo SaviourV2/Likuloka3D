@@ -1,7 +1,7 @@
 'use client';
 /** Properties of the selected node. Each field commits one undo step when it changes. */
 import { useEffect, useState } from 'react';
-import { addZone, area, rename, setOrigin, updateLevel, updateSlab, updateWall, updateZone } from '@/scene/ops';
+import { addZone, area, rename, setOrigin, updateLevel, updateOpening, updateSlab, updateWall, updateZone } from '@/scene/ops';
 import { commit, removeSelected, useEditor } from '@/scene/store';
 import { ROOM_TYPES, type RoomType, type SceneDoc, type Vec2 } from '@/scene/types';
 import { USE_COLOURS } from '@/ecs/materials';
@@ -55,6 +55,7 @@ export default function Inspector() {
           <li><kbd>V</kbd> Select, <kbd>W</kbd> Draw walls</li>
           <li>Drag a wall to slide it. Drag a ball to move an end or a corner.</li>
           <li>Drag a small ball to add a corner to a slab or zone.</li>
+          <li><kbd>D</kbd> Door, <kbd>N</kbd> Window: click a wall to add one. Drag one to slide it.</li>
           <li><kbd>Ctrl</kbd>+<kbd>Z</kbd> Undo, <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> Redo</li>
           <li><kbd>F</kbd> Frame the scene, <kbd>Esc</kbd> Cancel</li>
         </ul>
@@ -65,7 +66,7 @@ export default function Inspector() {
   const id = node.id;
   return (
     <aside className="inspector" aria-label="Inspector" data-type={node.type}>
-      <h2><span className={`dot dot-${node.type}`} aria-hidden="true" />{node.type[0].toUpperCase() + node.type.slice(1)}</h2>
+      <h2><span className={`dot dot-${node.type}`} aria-hidden="true" />{node.type === 'opening' ? (node.kind === 'door' ? 'Door' : 'Window') : node.type[0].toUpperCase() + node.type.slice(1)}</h2>
       <Text label="Name" value={node.name} onCommit={v => edit(d => rename(d, id, v), 'Rename')} />
       {node.type === 'building' && (
         <div className="fields">
@@ -104,13 +105,30 @@ export default function Inspector() {
           <p className="figure">Area <b>{fmt(Math.abs(area(node.points)))} m²</b> · {node.points.length} corners</p>
         </div>
       )}
+      {node.type === 'opening' && (
+        <div className="fields">
+          <div className="segmented" role="radiogroup" aria-label="Kind">
+            {(['door', 'window'] as const).map(k => (
+              <button key={k} type="button" role="radio" aria-checked={node.kind === k} data-kind={k}
+                onClick={() => edit(d => updateOpening(d, id, { kind: k }), k === 'door' ? 'Make a door' : 'Make a window')}>
+                {k === 'door' ? 'Door' : 'Window'}
+              </button>
+            ))}
+          </div>
+          <Num label="Width" value={node.width} onCommit={v => edit(d => updateOpening(d, id, { width: v }), 'Change opening width')} />
+          <Num label="Height" value={node.height} step={0.05} onCommit={v => edit(d => updateOpening(d, id, { height: v }), 'Change opening height')} />
+          <Num label="Sill" value={node.sill} step={0.05} onCommit={v => edit(d => updateOpening(d, id, { sill: v }), 'Change sill height')} />
+          <Num label="Along wall" value={node.offset} step={0.125} onCommit={v => edit(d => updateOpening(d, id, { offset: v }), 'Move opening')} />
+          <p className="figure">Drag it in the view to slide it along its wall.</p>
+        </div>
+      )}
       {node.type === 'slab' && (
         <div className="fields">
           <Num label="Thickness" value={node.thickness} step={0.05} onCommit={v => edit(d => updateSlab(d, id, { thickness: v }), 'Change slab thickness')} />
           <p className="figure">Area <b>{fmt(Math.abs(area(node.points)))} m²</b> · {node.points.length} corners</p>
         </div>
       )}
-      <button type="button" className="danger" onClick={() => { removeSelected(); rig.invalidate(); }}>Delete {node.type}</button>
+      <button type="button" className="danger" onClick={() => { removeSelected(); rig.invalidate(); }}>Delete {node.type === 'opening' ? node.kind : node.type}</button>
       {error && <p className="error" role="alert">{error}</p>}
     </aside>
   );
