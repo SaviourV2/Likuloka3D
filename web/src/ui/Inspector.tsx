@@ -2,8 +2,10 @@
 /** Properties of the selected node. Each field commits one undo step when it changes. */
 import { useEffect, useState } from 'react';
 import { addZone, area, rename, setOrigin, updateLevel, updateOpening, updateSlab, updateWall, updateZone } from '@/scene/ops';
-import { commit, removeSelected, useEditor } from '@/scene/store';
-import { FINISH_LABELS, OPENING_FINISHES, ROOM_TYPES, type OpeningFinish, type RoomType, type SceneDoc, type Vec2 } from '@/scene/types';
+import { commit, isClient, removeSelected, useEditor } from '@/scene/store';
+import { FINISH_LABELS, frameSize, OPENING_FINISHES, ROOM_TYPES, type OpeningFinish, type OpeningNode, type RoomType, type SceneDoc, type SceneNode, type Vec2, type WallNode } from '@/scene/types';
+import { applyProduct, applyWallType, formatPrice, productFor, wallTypeFor } from '@/scene/catalogue';
+import { checks } from '@/scene/checks';
 import { FINISH_SWATCH, USE_COLOURS } from '@/ecs/materials';
 
 /** A row of mutually exclusive choices that each commit one undo step. */
@@ -80,10 +82,19 @@ export default function Inspector() {
       </aside>
     );
   }
+  return <Selected node={node} error={error} />;
+}
+
+function Selected({ node, error }: { node: SceneNode; error: string | null }) {
+  const client = useEditor(isClient);
+  // In the client view only doors, windows and rooms can be changed; the rest is shown, disabled.
+  const locked = client && node.type !== 'opening' && node.type !== 'zone';
   const id = node.id;
   return (
-    <aside className="inspector" aria-label="Inspector" data-type={node.type}>
+    <aside className="inspector" aria-label="Inspector" data-type={node.type} data-locked={locked}>
       <h2><span className={`dot dot-${node.type}`} aria-hidden="true" />{node.type === 'opening' ? (node.kind === 'door' ? 'Door' : 'Window') : node.type[0].toUpperCase() + node.type.slice(1)}</h2>
+      {locked && <p className="hint">Drawn by your designer. You can change doors, windows and rooms.</p>}
+      <fieldset className="plain" disabled={locked}>
       <Text label="Name" value={node.name} onCommit={v => edit(d => rename(d, id, v), 'Rename')} />
       {node.type === 'building' && (
         <div className="fields">
@@ -106,7 +117,8 @@ export default function Inspector() {
           <Num label="Start y" value={node.a[1]} onCommit={v => edit(d => updateWall(d, id, { a: [node.a[0], v] }), 'Move wall end')} />
           <Num label="End x" value={node.b[0]} onCommit={v => edit(d => updateWall(d, id, { b: [v, node.b[1]] }), 'Move wall end')} />
           <Num label="End y" value={node.b[1]} onCommit={v => edit(d => updateWall(d, id, { b: [node.b[0], v] }), 'Move wall end')} />
-          <Num label="Thickness" value={node.thickness} step={0.05} onCommit={v => edit(d => updateWall(d, id, { thickness: v }), 'Change wall thickness')} />
+          <BuildUp wall={node} />
+          <Num label="Thickness" value={node.thickness} step={0.005} onCommit={v => edit(d => updateWall(d, id, { thickness: v }), 'Change wall thickness')} />
           <Num label="Height" value={node.height} step={0.05} onCommit={v => edit(d => updateWall(d, id, { height: v }), 'Change wall height')} />
         </div>
       )}
@@ -124,8 +136,11 @@ export default function Inspector() {
       )}
       {node.type === 'opening' && (
         <div className="fields">
+          <ProductPicker opening={node} />
+          <fieldset className="plain" disabled={client}>
           <Choice label="Type" value={node.kind} options={[['door', 'Door'], ['window', 'Window']]}
             onPick={k => edit(d => updateOpening(d, id, { kind: k }), k === 'door' ? 'Make a door' : 'Make a window')} />
+          </fieldset>
           <Choice label="Head" value={node.shape} options={[['square', 'Square'], ['arched', 'Rounded']]}
             onPick={v => edit(d => updateOpening(d, id, { shape: v }), v === 'arched' ? 'Round the head' : 'Square the head')} />
           <label className="field wide">
@@ -137,18 +152,21 @@ export default function Inspector() {
           </label>
           <Choice label="Drawn" value={node.state} options={[['closed', 'Closed'], ['open', 'Open']]}
             onPick={v => edit(d => updateOpening(d, id, { state: v }), v === 'open' ? `Open the ${node.kind}` : `Close the ${node.kind}`)} />
-          <Num label="Width" value={node.width} onCommit={v => edit(d => updateOpening(d, id, { width: v }), 'Change opening width')} />
-          <Num label="Height" value={node.height} step={0.05} onCommit={v => edit(d => updateOpening(d, id, { height: v }), 'Change opening height')} />
+          <fieldset className="plain" disabled={client}>
+          <Num label="Width" value={node.width} step={0.005} onCommit={v => edit(d => updateOpening(d, id, { width: v }), 'Change opening width')} />
+          <Num label="Height" value={node.height} step={0.005} onCommit={v => edit(d => updateOpening(d, id, { height: v }), 'Change opening height')} />
           <Num label="Sill" value={node.sill} step={0.05} onCommit={v => edit(d => updateOpening(d, id, { sill: v }), 'Change sill height')} />
           <Num label="Along wall" value={node.offset} step={0.125} onCommit={v => edit(d => updateOpening(d, id, { offset: v }), 'Move opening')} />
+          </fieldset>
           <dl className="measures" aria-label="Measurements">
-            <dt>Size</dt><dd data-measure="size">{mm(node.width)} × {mm(node.height)} mm</dd>
+            <dt>Opening</dt><dd data-measure="size">{mm(node.width)} × {mm(node.height)} mm</dd>
+            <FrameSize opening={node} />
             <dt>Head height</dt><dd>{mm(node.sill + node.height)} mm</dd>
             {node.kind === 'window' && <><dt>Sill height</dt><dd>{mm(node.sill)} mm</dd></>}
             {node.shape === 'arched' && <><dt>Arch radius</dt><dd>{mm(node.width / 2)} mm</dd></>}
             <WallDepth wall={node.parent} />
           </dl>
-          <p className="figure">Drag it in the view to slide it along its wall.</p>
+          {!client && <p className="figure">Drag it in the view to slide it along its wall.</p>}
         </div>
       )}
       {node.type === 'slab' && (
@@ -157,7 +175,9 @@ export default function Inspector() {
           <p className="figure">Area <b>{fmt(Math.abs(area(node.points)))} m²</b> · {node.points.length} corners</p>
         </div>
       )}
-      <button type="button" className="danger" onClick={() => { removeSelected(); rig.invalidate(); }}>Delete {node.type === 'opening' ? node.kind : node.type}</button>
+      </fieldset>
+      <Issues id={id} />
+      {!client && <button type="button" className="danger" onClick={() => { removeSelected(); rig.invalidate(); }}>Delete {node.type === 'opening' ? node.kind : node.type}</button>}
       {error && <p className="error" role="alert">{error}</p>}
     </aside>
   );
@@ -167,4 +187,81 @@ export default function Inspector() {
 function WallDepth({ wall }: { wall: string }) {
   const t = useEditor(s => { const w = s.doc.nodes[wall]; return w?.type === 'wall' ? w.thickness : 0; });
   return <><dt>Wall depth</dt><dd>{mm(t)} mm</dd></>;
+}
+
+/** The frame that fits the opening, after the project's fitting gap. */
+function FrameSize({ opening }: { opening: OpeningNode }) {
+  const tolerance = useEditor(s => s.doc.settings.tolerance);
+  const f = frameSize(opening, tolerance);
+  return <><dt>Frame</dt><dd data-measure="frame">{mm(f.width)} × {mm(f.height)} mm</dd></>;
+}
+
+/** Picks the opening's catalogue product, which sets its type, head, frame and size. */
+function ProductPicker({ opening }: { opening: OpeningNode }) {
+  const catalogue = useEditor(s => s.catalogue);
+  const product = productFor(catalogue, opening.product);
+  const group = (kind: 'door' | 'window') => catalogue.products.filter(p => p.kind === kind);
+  return (
+    <>
+      <label className="field wide">
+        <span>Product</span>
+        <select aria-label="Product" value={opening.product ?? ''} onChange={e => {
+          const p = productFor(catalogue, e.target.value);
+          if (p) edit(d => applyProduct(d, opening.id, p), `Choose ${p.code}`);
+          else edit(d => updateOpening(d, opening.id, { product: null }), 'Make it a custom size');
+        }}>
+          <option value="">Custom size</option>
+          {opening.product && !product && <option value={opening.product}>{opening.product} (not in the catalogue)</option>}
+          <optgroup label="Doors">{group('door').map(p => <option key={p.code} value={p.code}>{p.name}</option>)}</optgroup>
+          <optgroup label="Windows">{group('window').map(p => <option key={p.code} value={p.code}>{p.name}</option>)}</optgroup>
+        </select>
+      </label>
+      {product && (
+        <p className="figure product">
+          <b>{product.code}</b> · frame {product.width} × {product.height} mm{product.price !== undefined && <> · {formatPrice(catalogue, product.price)}</>}
+        </p>
+      )}
+    </>
+  );
+}
+
+/** The wall's build-up: a catalogue wall type, or plain. */
+function BuildUp({ wall }: { wall: WallNode }) {
+  const catalogue = useEditor(s => s.catalogue);
+  const type = wallTypeFor(catalogue, wall.wallType);
+  return (
+    <>
+      <label className="field wide">
+        <span>Build-up</span>
+        <select aria-label="Build-up" value={wall.wallType ?? ''} onChange={e => {
+          const w = wallTypeFor(catalogue, e.target.value);
+          if (w) edit(d => applyWallType(d, wall.id, w), `Build-up ${w.name}`);
+          else edit(d => updateWall(d, wall.id, { layers: [], wallType: null }), 'Plain wall');
+        }}>
+          <option value="">{wall.layers.length && !type ? 'Custom build-up' : 'Plain wall'}</option>
+          {catalogue.wallTypes.map(w => <option key={w.code} value={w.code}>{w.name}</option>)}
+        </select>
+      </label>
+      {wall.layers.length > 0 && (
+        <ol className="layers" aria-label="Layers">
+          {wall.layers.map((l, i) => (
+            <li key={i} data-kind={l.kind}><i aria-hidden="true" />{l.name}<b>{(l.thickness * 1000).toLocaleString('en-GB', { maximumFractionDigits: 1 })} mm</b></li>
+          ))}
+        </ol>
+      )}
+    </>
+  );
+}
+
+/** The checks' findings for the selected node. */
+function Issues({ id }: { id: string }) {
+  const doc = useEditor(s => s.doc);
+  const catalogue = useEditor(s => s.catalogue);
+  const mine = checks(doc, catalogue).filter(i => i.node === id);
+  if (!mine.length) return null;
+  return (
+    <ul className="issues compact" aria-label="Checks">
+      {mine.map(i => <li key={i.key} data-severity={i.severity} data-rule={i.rule}><span className="sev">{i.severity === 'warning' ? 'Warning' : 'Note'}</span><span>{i.message}</span></li>)}
+    </ul>
+  );
 }

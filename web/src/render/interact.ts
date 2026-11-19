@@ -47,7 +47,8 @@ type Edit = (base: SceneDoc, from: Vec2, to: Vec2) => SceneDoc;
 /** Starts a drag from a pointer-down on a mesh or handle. */
 export function startDrag(e: ThreeEvent<PointerEvent>, target: Id, what: Extract<Interaction, { kind: 'dragging' }>['what'], label: string, edit: Edit) {
   const s = editor.getState();
-  if (e.button !== 0 || s.tool !== 'select' || !shown(e.object)) return;
+  // Clients do not move things: a press only selects, through the click handlers.
+  if (e.button !== 0 || s.tool !== 'select' || !shown(e.object) || s.role.kind === 'client') return;
   const level = ancestor(s.doc, target, 'level');
   if (!level) return;
   e.stopPropagation();

@@ -5,6 +5,7 @@ import * as ops from '@/scene/ops';
 import * as projects from '@/scene/projects';
 import { importRoomlines, SAMPLE, type RoomlinesPlan } from '@/scene/roomlines';
 import { schedule, scheduleCsv } from '@/scene/schedule';
+import { applyProduct, BUNDLED, fetchCatalogue, productFor } from '@/scene/catalogue';
 import * as store from '@/scene/store';
 import { editor, isUnsaved, useEditor } from '@/scene/store';
 import type { SceneDoc } from '@/scene/types';
@@ -12,7 +13,13 @@ import { world } from '@/ecs/world';
 import { endChain, rig } from '@/render/interact';
 import Tree from './Tree';
 import Inspector from './Inspector';
-import { ProjectDialog, ScheduleDialog, download } from './Dialogs';
+import { ChecksDialog, CloudDialog, DrawingsDialog, ProjectDialog, ScheduleDialog, VersionsDialog, download } from './Dialogs';
+import * as cloud from '@/scene/cloud';
+import { drawingSet } from '@/scene/drawings';
+import { ifcFile } from '@/scene/ifc';
+import { rememberedName } from '@/scene/versions';
+import { checks } from '@/scene/checks';
+import { compare, versionStore } from '@/scene/versions';
 
 // three.js and WebGPU need the browser, so the viewport is never rendered on the server.
 const Viewport = dynamic(() => import('@/render/Viewport'), { ssr: false, loading: () => <div className="viewport loading">Starting the 3D view…</div> });
@@ -29,30 +36,36 @@ export function sampleScene(): SceneDoc {
   // Doors and windows, by a point on the wall each sits in.
   const [house, studio] = doc.roots.map(r => doc.nodes[r]);
   const levels = (b: typeof house) => (b.type === 'building' ? b.children : []);
-  const put = (level: string, kind: 'door' | 'window', at: [number, number], extra: Partial<ops.OpeningInput> = {}) => {
+  // Each opening is a catalogue product where one fits; the rest are custom sizes.
+  const put = (level: string, kind: 'door' | 'window', at: [number, number], extra: Partial<ops.OpeningInput> = {}, code?: string) => {
     const wall = ops.wallAt(doc, level, at);
-    if (wall) [doc] = ops.addOpeningAt(doc, wall.id, kind, at, extra);
+    if (!wall) return;
+    let id: string;
+    [doc, id] = ops.addOpeningAt(doc, wall.id, kind, at, extra);
+    const product = code ? productFor(BUNDLED, code) : null;
+    if (product) doc = applyProduct(doc, id, product);
   };
   levels(house).forEach((level, i) => {
-    if (i === 0) put(level, 'door', [6.25, 7.75], { shape: 'arched', finish: 'timber' });
-    else put(level, 'window', [6.25, 7.75]);
-    put(level, 'door', [5.5, 2.25]);
-    put(level, 'door', [5.5, 6.25], { state: 'open' });
-    put(level, 'door', [7, 2]);
-    put(level, 'door', [7, 6]);
-    put(level, 'door', [10.25, 4.25], { width: 0.75 });
-    put(level, 'window', [2.75, 0], { width: 2.5, state: i === 0 ? 'open' : 'closed' });
-    put(level, 'window', [0, 6], { width: 1.5 });
-    put(level, 'window', [0, 2.25], { width: 1.5 });
-    put(level, 'window', [9, 0], { width: 1.5, shape: 'arched', finish: 'upvc' });
-    put(level, 'window', [11, 2], { width: 1.5 });
-    put(level, 'window', [11, 6], { width: 1 });
-    put(level, 'window', [8.25, 7.75], { width: 1, sill: 1.5, height: 0.6, finish: 'upvc' });
+    if (i === 0) put(level, 'door', [6.25, 7.75], { shape: 'arched', finish: 'timber' }, 'D-TIM-ARCH-980');
+    else put(level, 'window', [6.25, 7.75], {}, 'W-ALU-980x1180');
+    put(level, 'door', [5.5, 2.25], {}, 'D-TIM-826');
+    put(level, 'door', [5.5, 6.25], { state: 'open' }, 'D-TIM-826');
+    put(level, 'door', [7, 2], {}, 'D-TIM-826');
+    put(level, 'door', [7, 6], {}, 'D-TIM-726');
+    put(level, 'door', [10.25, 4.25], { width: 0.75 }, 'D-TIM-726');
+    put(level, 'window', [2.75, 0], { width: 2.5, state: i === 0 ? 'open' : 'closed' }, 'W-ALU-2480x1180');
+    put(level, 'window', [0, 6], { width: 1.5 }, 'W-ALU-1480x1180');
+    put(level, 'window', [0, 2.25], { width: 1.5 }, 'W-ALU-1480x1180');
+    put(level, 'window', [9, 0], { width: 1.5, shape: 'arched', finish: 'upvc' }, 'W-UPVC-ARCH-1480x1180');
+    put(level, 'window', [11, 2], { width: 1.5 }, 'W-ALU-1480x1180');
+    put(level, 'window', [11, 6], { width: 1 }, 'W-ALU-980x1180');
+    put(level, 'window', [8.25, 7.75], { width: 1, sill: 1.5, height: 0.6, finish: 'upvc' }, 'W-UPVC-980x580');
   });
   for (const level of levels(studio)) {
-    put(level, 'door', [5.25, 3.5], { finish: 'steel' });
+    put(level, 'door', [5.25, 3.5], { finish: 'steel' }, 'D-STL-980');
+    // Left as a custom size, to show one.
     put(level, 'window', [2.25, 3.5], { width: 2 });
-    put(level, 'window', [6, 1.75], { width: 1 });
+    put(level, 'window', [6, 1.75], { width: 1 }, 'W-ALU-980x1180');
   }
   return doc;
 }
@@ -81,34 +94,58 @@ function ProjectName() {
 function SaveButton() {
   const unsaved = useEditor(isUnsaved);
   const savedAt = useEditor(s => s.project.savedAt);
+  const where = useEditor(s => s.project.where);
   const when = savedAt ? new Date(savedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : null;
   return (
     <button type="button" data-action="save" data-unsaved={unsaved} className={unsaved ? 'save unsaved' : 'save'}
-      title={unsaved ? 'Save the project in this browser (Ctrl+S)' : when ? `Saved at ${when}` : 'Saved'}
-      onClick={() => projects.saveProject()}>
+      title={unsaved ? `Save the project ${where === 'cloud' ? 'to the cloud' : 'in this browser'} (Ctrl+S)` : when ? `Saved at ${when}` : 'Saved'}
+      onClick={() => { void cloud.save(); }}>
       {unsaved ? 'Save' : 'Saved'}
     </button>
   );
 }
 
-function Toolbar({ onProject, onSchedule }: { onProject: () => void; onSchedule: () => void }) {
+/** The Project menu: everything about the project as a whole, in one place. */
+function Menu({ items }: { items: [action: string, label: string, run: () => void][] }) {
+  const ref = useRef<HTMLDetailsElement>(null);
+  useEffect(() => {
+    // Closes when the pointer goes down anywhere outside it.
+    const away = (e: PointerEvent) => { if (ref.current?.open && !ref.current.contains(e.target as Node)) ref.current.open = false; };
+    window.addEventListener('pointerdown', away);
+    return () => window.removeEventListener('pointerdown', away);
+  }, []);
+  return (
+    <details className="menu" ref={ref}>
+      <summary data-action="menu">Project</summary>
+      <div className="menu-items" role="menu">
+        {items.map(([action, label, run]) => (
+          <button key={action} type="button" role="menuitem" data-action={action} onClick={() => { if (ref.current) ref.current.open = false; run(); }}>{label}</button>
+        ))}
+      </div>
+    </details>
+  );
+}
+
+function Toolbar({ menu }: { menu: [string, string, () => void][] }) {
   const tool = useEditor(s => s.tool);
   const undoLabel = useEditor(s => s.past.at(-1)?.label);
   const redoLabel = useEditor(s => s.future[0]?.label);
   const drawing = useEditor(s => s.interaction.kind === 'drawing-wall' && !!s.interaction.from);
   const cut = useEditor(s => s.cut);
   const measure = useEditor(s => s.measure);
+  const client = useEditor(store.isClient);
   return (
-    <header className="bar glass">
+    <header className="bar glass" data-role={client ? 'client' : 'designer'}>
       <span className="brand"><b>Likuloka</b> 3D</span>
       <ProjectName />
       <SaveButton />
-      <div className="segmented" role="radiogroup" aria-label="Tool">
+      {client && <span className="badge" title="You can choose doors, windows, finishes and room uses">Client view</span>}
+      {!client && <div className="segmented" role="radiogroup" aria-label="Tool">
         <button type="button" role="radio" aria-checked={tool === 'select'} data-tool="select" title="Select (V)" onClick={() => store.setTool('select')}>Select</button>
         <button type="button" role="radio" aria-checked={tool === 'wall'} data-tool="wall" title="Draw walls (W)" onClick={() => store.setTool('wall')}>Walls</button>
         <button type="button" role="radio" aria-checked={tool === 'door'} data-tool="door" title="Add doors (D)" onClick={() => store.setTool('door')}>Door</button>
         <button type="button" role="radio" aria-checked={tool === 'window'} data-tool="window" title="Add windows (N)" onClick={() => store.setTool('window')}>Window</button>
-      </div>
+      </div>}
       {tool === 'wall' && <span className="hint">{drawing ? 'Click to add the next wall. Esc ends the run.' : 'Click to start a wall.'}</span>}
       {(tool === 'door' || tool === 'window') && <span className="hint">Click a wall to add a {tool}. Esc to stop.</span>}
       <span className="spacer" />
@@ -116,14 +153,40 @@ function Toolbar({ onProject, onSchedule }: { onProject: () => void; onSchedule:
       <button type="button" aria-pressed={measure} data-action="measure" title="Show the size of every door and window (M)" onClick={() => store.setMeasure(!measure)}>Measure</button>
       <button type="button" className="icon" data-action="undo" aria-label="Undo" disabled={!undoLabel} title={undoLabel ? `Undo ${undoLabel} (Ctrl+Z)` : 'Nothing to undo'} onClick={() => store.undo()}>↶</button>
       <button type="button" className="icon" data-action="redo" aria-label="Redo" disabled={!redoLabel} title={redoLabel ? `Redo ${redoLabel} (Ctrl+Shift+Z)` : 'Nothing to redo'} onClick={() => store.redo()}>↷</button>
-      <button type="button" data-action="schedule" onClick={onSchedule}>Schedule</button>
-      <button type="button" data-action="project" onClick={onProject}>Project</button>
+      <Menu items={menu} />
     </header>
   );
 }
 
-function Status() {
+function CheckCount({ onOpen }: { onOpen: () => void }) {
+  const doc = useEditor(s => s.doc);
+  const catalogue = useEditor(s => s.catalogue);
+  const issues = checks(doc, catalogue);
+  const warnings = issues.filter(i => i.severity === 'warning').length;
+  return (
+    <button type="button" className="checks" data-action="checks-count" data-warnings={warnings} onClick={onOpen}>
+      {warnings ? `${warnings} warning${warnings === 1 ? '' : 's'}` : 'No warnings'}{issues.length > warnings ? `, ${issues.length - warnings} note${issues.length - warnings === 1 ? '' : 's'}` : ''}
+    </button>
+  );
+}
+
+/** Tells the person when someone else saved the open cloud project. */
+function CloudNotice() {
+  const notice = useEditor(s => s.cloud.notice);
+  if (!notice || notice.kind !== 'remote') return null;
+  return (
+    <span className="notice" role="status" data-notice="remote">
+      {notice.text} <button type="button" data-action="reload" onClick={() => {
+        if (isUnsaved(editor.getState()) && !window.confirm('Reloading discards your unsaved changes. Reload?')) return;
+        void cloud.reload();
+      }}>Reload</button>
+    </span>
+  );
+}
+
+function Status({ onChecks }: { onChecks: () => void }) {
   const backend = useBackend();
+  const where = useEditor(s => s.project.where);
   const steps = useEditor(s => s.past.length);
   const unsaved = useEditor(isUnsaved);
   const [last, setLast] = useState('');
@@ -140,7 +203,9 @@ function Status() {
   return (
     <footer className="status">
       <span data-backend={backend}>{backend}</span>
-      <span>{unsaved ? 'Unsaved changes' : 'Saved'}</span>
+      <span>{unsaved ? 'Unsaved changes' : where === 'cloud' ? 'Saved in the cloud' : 'Saved'}</span>
+      <CloudNotice />
+      <CheckCount onOpen={onChecks} />
       <span>{steps} undo step{steps === 1 ? '' : 's'}</span>
       {last && <span>{last}</span>}
     </footer>
@@ -166,10 +231,33 @@ export default function Editor() {
   const [ready, setReady] = useState(false);
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [projectOpen, setProjectOpen] = useState(false);
+  const cloudDialog = useRef<HTMLDialogElement>(null);
+  const [cloudOpen, setCloudOpen] = useState(false);
+  const drawingsDialog = useRef<HTMLDialogElement>(null);
+  const [drawingsOpen, setDrawingsOpen] = useState(false);
+  const versionsDialog = useRef<HTMLDialogElement>(null);
+  const [versionsOpen, setVersionsOpen] = useState(false);
+  const checksDialog = useRef<HTMLDialogElement>(null);
+  const [checksOpen, setChecksOpen] = useState(false);
 
   useEffect(() => {
     if (!projects.restore()) projects.newProject(sampleScene());
     setReady(true);
+    fetchCatalogue().then(store.setCatalogue);
+    // Cloud, if this site has it; then a share link in the address, if there is one.
+    cloud.startCloud().then(on => {
+      const params = new URLSearchParams(window.location.search);
+      const project = params.get('project'), invite = params.get('invite');
+      if (!on || !project || !invite) return;
+      const join = () => cloud.acceptInvite(project, invite).then(ok => {
+        if (ok) { history.replaceState(null, '', window.location.pathname); import('@/render/Viewport').then(m => m.frame(editor.getState().doc)); }
+      });
+      if (editor.getState().cloud.user) { void join(); return; }
+      // Sign in first, then join.
+      setCloudOpen(true);
+      cloudDialog.current?.showModal();
+      const unsub = editor.subscribe(st => { if (st.cloud.user) { unsub(); cloudDialog.current?.close(); void join(); } });
+    });
     // The working copy is written as a draft on every change, so a reload restores it.
     let timer = 0;
     const unsub = editor.subscribe((s, prev) => {
@@ -182,7 +270,7 @@ export default function Editor() {
       const mod = e.ctrlKey || e.metaKey;
       const k = e.key.toLowerCase();
       // Saving works from anywhere, even while typing in a field.
-      if (mod && k === 's') { e.preventDefault(); (document.activeElement as HTMLElement | null)?.blur?.(); projects.saveProject(); return; }
+      if (mod && k === 's') { e.preventDefault(); (document.activeElement as HTMLElement | null)?.blur?.(); void cloud.save(); return; }
       const t = e.target as HTMLElement;
       if (t.closest('input, textarea, select, dialog')) return;
       if (mod && k === 'z') { e.preventDefault(); if (e.shiftKey) store.redo(); else store.undo(); }
@@ -220,6 +308,8 @@ export default function Editor() {
         };
       },
       getDoc: () => editor.getState().doc,
+      setRole: store.setRole,
+      role: () => editor.getState().role,
       ops,
       commit: store.commit,
       undo: store.undo,
@@ -231,6 +321,20 @@ export default function Editor() {
       load: store.load,
       importRoomlines: (plan: RoomlinesPlan) => store.commit(d => importRoomlines(d, plan)[0], 'Import plan'),
       reset: () => projects.newProject(sampleScene()),
+      cloud: {
+        state: () => editor.getState().cloud,
+        signIn: cloud.signInWithEmail,
+        createAccount: cloud.createAccount,
+        signOut: cloud.signOut,
+        save: cloud.saveToCloud,
+        open: cloud.openCloudProject,
+        list: cloud.listCloudProjects,
+        invite: cloud.createInvite,
+        accept: cloud.acceptInvite,
+        members: cloud.members,
+        removeMember: cloud.removeMember,
+      },
+      save: cloud.save,
       projects: {
         list: projects.listProjects,
         save: projects.saveProject,
@@ -240,12 +344,22 @@ export default function Editor() {
         file: () => projects.projectFile(editor.getState().doc),
         openFile: projects.openProjectFile,
       },
-      schedule: () => schedule(editor.getState().doc),
-      scheduleCsv: () => scheduleCsv(editor.getState().doc),
+      schedule: () => schedule(editor.getState().doc, editor.getState().catalogue),
+      scheduleCsv: () => scheduleCsv(editor.getState().doc, editor.getState().catalogue),
+      catalogue: () => editor.getState().catalogue,
+      setCatalogue: store.setCatalogue,
+      ifc: () => { const s = editor.getState(); return ifcFile(s.doc, { projectId: s.project.id, catalogue: s.catalogue }); },
+      drawings: () => drawingSet(editor.getState().doc, editor.getState().catalogue),
+      checks: () => checks(editor.getState().doc, editor.getState().catalogue),
+      versions: {
+        list: () => versionStore(editor.getState().project.where).list(editor.getState().project.id),
+        compare: (id: string) => versionStore(editor.getState().project.where).list(editor.getState().project.id)
+          .then(l => { const v = l.find(x => x.id === id); return v ? compare(v.doc, editor.getState().doc, editor.getState().catalogue) : null; }),
+      },
       download: (what: 'project' | 'schedule') => {
         const doc = editor.getState().doc;
         if (what === 'project') download(projects.fileName(doc), projects.projectFile(doc), 'application/json');
-        else download(projects.fileName(doc).replace('.likuloka.json', '-schedule.csv'), scheduleCsv(doc), 'text/csv');
+        else download(projects.fileName(doc).replace('.likuloka.json', '-schedule.csv'), scheduleCsv(doc, editor.getState().catalogue), 'text/csv');
       },
       stats: () => JSON.parse(JSON.stringify(world.stats)),
       resetStats: () => world.resetStats(),
@@ -268,15 +382,31 @@ export default function Editor() {
 
   return (
     <div className="editor">
-      <Toolbar onProject={() => { setProjectOpen(true); projectDialog.current?.showModal(); }} onSchedule={() => { setScheduleOpen(true); scheduleDialog.current?.showModal(); }} />
+      <Toolbar menu={[
+        ['cloud', 'Cloud and sharing…', () => { setCloudOpen(true); cloudDialog.current?.showModal(); }],
+        ['project', 'Projects and files…', () => { setProjectOpen(true); projectDialog.current?.showModal(); }],
+        ['versions', 'Versions and sign-off…', () => { setVersionsOpen(true); versionsDialog.current?.showModal(); }],
+        ['schedule', 'Door and window schedule…', () => { setScheduleOpen(true); scheduleDialog.current?.showModal(); }],
+        ['drawings', 'Drawings: plans and elevations…', () => { setDrawingsOpen(true); drawingsDialog.current?.showModal(); }],
+        ['ifc', 'Export IFC for BIM', () => {
+          const s = editor.getState();
+          const name = projects.fileName(s.doc).replace('.likuloka.json', '.ifc');
+          download(name, ifcFile(s.doc, { projectId: s.project.id, catalogue: s.catalogue, fileName: name, author: rememberedName() }), 'application/x-step');
+        }],
+        ['checks', 'Checks…', () => { setChecksOpen(true); checksDialog.current?.showModal(); }],
+      ]} />
       <Tree />
       <main className="stage">
         {ready && <Viewport />}
       </main>
       <Inspector />
-      <Status />
+      <Status onChecks={() => { setChecksOpen(true); checksDialog.current?.showModal(); }} />
       <ProjectDialog dialog={projectDialog} open={projectOpen} onClose={() => setProjectOpen(false)} sample={sampleScene} okToDiscard={okToDiscard} />
       <ScheduleDialog dialog={scheduleDialog} open={scheduleOpen} onClose={() => setScheduleOpen(false)} />
+      <CloudDialog dialog={cloudDialog} open={cloudOpen} onClose={() => setCloudOpen(false)} />
+      <DrawingsDialog dialog={drawingsDialog} open={drawingsOpen} onClose={() => setDrawingsOpen(false)} />
+      <VersionsDialog dialog={versionsDialog} open={versionsOpen} onClose={() => setVersionsOpen(false)} />
+      <ChecksDialog dialog={checksDialog} open={checksOpen} onClose={() => setChecksOpen(false)} />
     </div>
   );
 }

@@ -1,0 +1,58 @@
+{
+  "about": "Likuloka 3D catalogue. Edit this file on the server to change products, wall types, checks and the schedule's columns; the editor reads it when it opens. Sizes are frame sizes in millimetres. The products and prices here are examples, not real products: replace them with your own.",
+  "currency": "USD",
+  "products": [
+    { "code": "D-TIM-826", "name": "Timber internal door 826", "kind": "door", "shape": "square", "finish": "timber", "width": 826, "height": 2040, "price": 240 },
+    { "code": "D-TIM-926", "name": "Timber internal door 926", "kind": "door", "shape": "square", "finish": "timber", "width": 926, "height": 2040, "price": 265 },
+    { "code": "D-TIM-726", "name": "Timber internal door 726", "kind": "door", "shape": "square", "finish": "timber", "width": 726, "height": 2040, "price": 225 },
+    { "code": "D-TIM-ARCH-980", "name": "Timber arched entrance door", "kind": "door", "shape": "arched", "finish": "timber", "width": 980, "height": 2090, "price": 1450 },
+    { "code": "D-STL-980", "name": "Steel security door", "kind": "door", "shape": "square", "finish": "steel", "width": 980, "height": 2090, "price": 890 },
+    { "code": "D-UPVC-920", "name": "uPVC external door", "kind": "door", "shape": "square", "finish": "upvc", "width": 920, "height": 2090, "price": 610 },
+    { "code": "D-ALU-980", "name": "Aluminium glazed door", "kind": "door", "shape": "square", "finish": "aluminium", "width": 980, "height": 2090, "price": 980 },
+    { "code": "W-ALU-1480x1180", "name": "Aluminium window 1480 × 1180", "kind": "window", "shape": "square", "finish": "aluminium", "width": 1480, "height": 1180, "sill": 900, "price": 420 },
+    { "code": "W-ALU-980x1180", "name": "Aluminium window 980 × 1180", "kind": "window", "shape": "square", "finish": "aluminium", "width": 980, "height": 1180, "sill": 900, "price": 330 },
+    { "code": "W-ALU-2480x1180", "name": "Aluminium window 2480 × 1180", "kind": "window", "shape": "square", "finish": "aluminium", "width": 2480, "height": 1180, "sill": 900, "price": 690 },
+    { "code": "W-ALU-1980x1180", "name": "Aluminium window 1980 × 1180", "kind": "window", "shape": "square", "finish": "aluminium", "width": 1980, "height": 1180, "sill": 900, "price": 560 },
+    { "code": "W-UPVC-980x580", "name": "uPVC high-level window", "kind": "window", "shape": "square", "finish": "upvc", "width": 980, "height": 580, "sill": 1500, "price": 210 },
+    { "code": "W-UPVC-ARCH-1480x1180", "name": "uPVC arched window", "kind": "window", "shape": "arched", "finish": "upvc", "width": 1480, "height": 1180, "sill": 900, "price": 640 },
+    { "code": "W-TIM-1180x1180", "name": "Timber casement window", "kind": "window", "shape": "square", "finish": "timber", "width": 1180, "height": 1180, "sill": 900, "price": 520 },
+    { "code": "W-STL-1480x1180", "name": "Steel-framed window", "kind": "window", "shape": "square", "finish": "steel", "width": 1480, "height": 1180, "sill": 900, "price": 760 }
+  ],
+  "wallTypes": [
+    { "code": "WT-STUD-100", "name": "Timber stud partition", "layers": [
+      { "name": "Plasterboard", "kind": "finish", "thickness": 12.5 },
+      { "name": "Timber stud", "kind": "structure", "thickness": 75 },
+      { "name": "Plasterboard", "kind": "finish", "thickness": 12.5 }
+    ] },
+    { "code": "WT-BLOCK-150", "name": "Plastered blockwork", "layers": [
+      { "name": "Plaster", "kind": "finish", "thickness": 15 },
+      { "name": "Concrete block", "kind": "structure", "thickness": 120 },
+      { "name": "Plaster", "kind": "finish", "thickness": 15 }
+    ] },
+    { "code": "WT-CAVITY-300", "name": "Insulated cavity wall", "layers": [
+      { "name": "Brick", "kind": "structure", "thickness": 102.5 },
+      { "name": "Cavity", "kind": "cavity", "thickness": 50 },
+      { "name": "Insulation", "kind": "insulation", "thickness": 50 },
+      { "name": "Concrete block", "kind": "structure", "thickness": 85 },
+      { "name": "Plaster", "kind": "finish", "thickness": 12.5 }
+    ] },
+    { "code": "WT-TIMBER-FRAME-220", "name": "Timber frame external wall", "layers": [
+      { "name": "Cladding", "kind": "finish", "thickness": 20 },
+      { "name": "Battens and cavity", "kind": "cavity", "thickness": 25 },
+      { "name": "Sheathing", "kind": "structure", "thickness": 12 },
+      { "name": "Stud and insulation", "kind": "insulation", "thickness": 140 },
+      { "name": "Plasterboard", "kind": "finish", "thickness": 15 }
+    ] }
+  ],
+  "rules": {
+    "minDoorWidth": 800,
+    "minDoorHeadHeight": 2000,
+    "escapeWindowArea": 0.33,
+    "escapeWindowMaxSill": 1100,
+    "daylightRatio": 0.1,
+    "minWallAboveOpening": 150,
+    "lintelSpanNeedsEngineer": 1800,
+    "junctionClearance": 100
+  },
+  "scheduleColumns": ["ref", "kind", "product", "productName", "shape", "finish", "frameWidth", "frameHeight", "width", "height", "sill", "head", "wall", "price", "building", "level", "state"]
+}

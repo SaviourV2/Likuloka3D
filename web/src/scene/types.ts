@@ -40,14 +40,23 @@ export interface LevelNode extends Base<'level'> {
   readonly height: number;
 }
 
+export type LayerKind = 'structure' | 'insulation' | 'cavity' | 'finish';
+/** One layer of a wall's build-up, listed from the side facing the wall's left (its normal) to the right. */
+export interface WallLayer { readonly name: string; readonly thickness: number; readonly kind: LayerKind }
+
 export interface WallNode extends Base<'wall'> {
   readonly parent: Id;
   /** The wall's openings. */
   readonly children: readonly Id[];
   readonly a: Vec2;
   readonly b: Vec2;
+  /** The total thickness: the sum of `layers` when the wall has a build-up. */
   readonly thickness: number;
   readonly height: number;
+  /** The build-up, or empty for a plain wall of `thickness`. */
+  readonly layers: readonly WallLayer[];
+  /** The catalogue wall type the build-up came from, or null when it is custom. */
+  readonly wallType: string | null;
 }
 
 export type RoomType =
@@ -74,7 +83,11 @@ export type OpeningFinish = 'timber' | 'steel' | 'aluminium' | 'upvc';
 /** Drawn with the door leaf or window sash shut, or swung open. */
 export type OpeningState = 'closed' | 'open';
 
-/** A door or window in a wall. Its place is measured along the wall from end `a`. */
+/**
+ * A door or window in a wall. Its place is measured along the wall from end
+ * `a`. Its width and height are the structural opening, the hole in the wall;
+ * the frame is smaller by the project's fitting gap (`frameSize`).
+ */
 export interface OpeningNode extends Base<'opening'> {
   readonly parent: Id;
   readonly kind: OpeningKind;
@@ -87,14 +100,22 @@ export interface OpeningNode extends Base<'opening'> {
   readonly shape: OpeningShape;
   readonly finish: OpeningFinish;
   readonly state: OpeningState;
+  /** The catalogue product it is, or null for a custom size. */
+  readonly product: string | null;
 }
 
 export type SceneNode = BuildingNode | LevelNode | WallNode | ZoneNode | SlabNode | OpeningNode;
 export type NodeOf<T extends NodeType> = Extract<SceneNode, { type: T }>;
 
+export interface ProjectSettings {
+  /** The fitting gap between a frame and the structural opening, on each side (and at a door's head). */
+  readonly tolerance: number;
+}
+
 export interface SceneDoc {
   /** The project's name. */
   readonly name: string;
+  readonly settings: ProjectSettings;
   readonly nodes: Readonly<Record<Id, SceneNode>>;
   /** Buildings, in order. */
   readonly roots: readonly Id[];
@@ -104,6 +125,9 @@ export interface SceneDoc {
 export type LevelMode = 'stack' | 'explode' | 'solo';
 
 export const GRID = 0.25;
+/** Door and window sizes are ordered in millimetres; they are kept to 5 mm. */
+export const SIZE_STEP = 0.005;
+export const DEFAULT_SETTINGS: ProjectSettings = { tolerance: 0.01 };
 /** Openings keep at least this much wall at each end and between each other. */
 export const OPENING_MARGIN = 0.1;
 export const OPENING_DEFAULTS: Record<OpeningKind, { width: number; height: number; sill: number; finish: OpeningFinish }> = {
@@ -121,3 +145,13 @@ export const ROOM_TYPES: readonly RoomType[] = [
   'living', 'kitchen', 'dining', 'bedroom', 'bathroom',
   'office', 'hallway', 'laundry', 'storage', 'studio',
 ];
+
+/** The frame that fits a structural opening: smaller by the fitting gap each side, and at a door's head. */
+export function frameSize(o: { kind: OpeningKind; width: number; height: number }, tolerance: number) {
+  return { width: o.width - 2 * tolerance, height: o.kind === 'door' ? o.height - tolerance : o.height - 2 * tolerance };
+}
+
+/** The structural opening a frame needs: the inverse of `frameSize`. */
+export function openingFor(kind: OpeningKind, frame: { width: number; height: number }, tolerance: number) {
+  return { width: frame.width + 2 * tolerance, height: kind === 'door' ? frame.height + tolerance : frame.height + 2 * tolerance };
+}

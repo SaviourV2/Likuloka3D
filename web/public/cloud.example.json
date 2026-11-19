@@ -1,0 +1,7 @@
+{
+  "about": "Copy this file to cloud.json, beside index.html, and fill it in from your Firebase project (Project settings, Your apps, Web app). These values are public by design: security comes from firebase/firestore.rules. Without cloud.json the editor keeps projects in the browser.",
+  "apiKey": "YOUR-WEB-API-KEY",
+  "authDomain": "your-project.firebaseapp.com",
+  "projectId": "your-project",
+  "appId": "1:000000000000:web:0000000000000000000000"
+}

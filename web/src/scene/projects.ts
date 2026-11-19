@@ -14,6 +14,7 @@
  */
 import { emptyDoc, migrate, SceneError, validate, addBuilding, addLevel } from './ops';
 import { editor, load } from './store';
+import type { Role } from './access';
 import type { SceneDoc } from './types';
 
 const INDEX = 'likuloka3d.projects';
@@ -66,7 +67,7 @@ export function saveProject(): boolean {
     openings: Object.values(s.doc.nodes).filter(n => n.type === 'opening').length,
   };
   write(INDEX, [entry, ...listProjects().filter(p => p.id !== entry.id)]);
-  editor.setState({ project: { id: s.project.id, saved: s.doc, savedAt: now }, error: null });
+  editor.setState({ project: { id: s.project.id, saved: s.doc, savedAt: now, where: 'local' }, error: null });
   writeDraft();
   return true;
 }
@@ -82,7 +83,7 @@ export function openProject(id: string): boolean {
   if (!load(doc)) return false;
   const entry = listProjects().find(p => p.id === id);
   // `load` may hand back a migrated copy, so the saved state is the document it loaded.
-  editor.setState({ project: { id, saved: editor.getState().doc, savedAt: entry?.updatedAt ?? null } });
+  editor.setState({ project: { id, saved: editor.getState().doc, savedAt: entry?.updatedAt ?? null, where: 'local' } });
   writeDraft();
   return true;
 }
@@ -92,7 +93,7 @@ export function deleteProject(id: string) {
   write(INDEX, listProjects().filter(p => p.id !== id));
   // Deleting the open project leaves its scene open, as a new, unsaved project.
   const s = editor.getState();
-  if (s.project.id === id) editor.setState({ project: { id: projectId(), saved: null, savedAt: null } });
+  if (s.project.id === id) editor.setState({ project: { id: projectId(), saved: null, savedAt: null, where: 'local' } });
 }
 
 /** A blank project: one building with a ground floor, ready to draw on. */
@@ -105,7 +106,7 @@ export function blankScene(name = 'Untitled project'): SceneDoc {
 /** Starts a new, unsaved project from a scene. */
 export function newProject(doc: SceneDoc): boolean {
   if (!load(doc)) return false;
-  editor.setState({ project: { id: projectId(), saved: null, savedAt: null } });
+  editor.setState({ project: { id: projectId(), saved: null, savedAt: null, where: 'local' } });
   writeDraft();
   return true;
 }
@@ -136,18 +137,29 @@ export function openProjectFile(text: string): boolean {
 /** Writes the working copy, so a reload restores it. */
 export function writeDraft() {
   const s = editor.getState();
-  write(DRAFT, { projectId: s.project.id, doc: s.doc, saved: s.project.saved === s.doc });
+  write(DRAFT, {
+    projectId: s.project.id, doc: s.doc, saved: s.project.saved === s.doc,
+    where: s.project.where, cloudVersion: s.project.cloudVersion, savedAt: s.project.savedAt, role: s.role,
+  });
 }
 
 /** Restores the working copy from the last visit. Returns false if there is none. */
 export function restore(): boolean {
-  const draft = read<{ projectId: string; doc: unknown; saved: boolean }>(DRAFT);
+  const draft = read<{ projectId: string; doc: unknown; saved: boolean; where?: 'local' | 'cloud'; cloudVersion?: number; savedAt?: number | null; role?: Role }>(DRAFT);
   if (draft?.doc) {
     try {
       const doc = checked(draft.doc);
       if (!load(doc)) return false;
+      if (draft.where === 'cloud') {
+        // A cloud project carries on where it was; saving checks it is still the latest.
+        editor.setState({
+          project: { id: draft.projectId, saved: draft.saved ? editor.getState().doc : null, savedAt: draft.savedAt ?? null, where: 'cloud', cloudVersion: draft.cloudVersion },
+          role: draft.role?.kind === 'client' ? draft.role : { kind: 'designer' },
+        });
+        return true;
+      }
       const entry = listProjects().find(p => p.id === draft.projectId);
-      editor.setState({ project: { id: draft.projectId, saved: draft.saved && entry ? editor.getState().doc : null, savedAt: entry?.updatedAt ?? null } });
+      editor.setState({ project: { id: draft.projectId, saved: draft.saved && entry ? editor.getState().doc : null, savedAt: entry?.updatedAt ?? null, where: 'local' } });
       return true;
     } catch { /* a broken draft is dropped */ }
   }

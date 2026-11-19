@@ -87,6 +87,12 @@ async function ids(page) {
   });
 }
 
+/** Opens the toolbar's Project menu and picks an item. */
+async function menu(page, action) {
+  await page.locator('[data-action="menu"]').click();
+  await page.locator(`.menu-items [data-action="${action}"]`).click();
+}
+
 const node = (page, id) => page.evaluate(i => likuloka.getDoc().nodes[i], id);
 const state = page => page.evaluate(() => likuloka.getState());
 
@@ -109,6 +115,8 @@ async function drag(page, level, grab, by, lift = 0) {
   const url = `http://127.0.0.1:${server.address().port}/`;
   const browser = await launch();
   const { page, context, errors } = await open(browser, url);
+  // Confirm prompts (discard changes, restore a version, delete) are accepted.
+  page.on('dialog', d => d.accept());
   const backend = await page.evaluate(() => likuloka.backend());
   console.log(`# renderer: ${backend}`);
 
@@ -388,14 +396,15 @@ async function drag(page, level, grab, by, lift = 0) {
     ok('M again leaves only the selection measured', (await page.locator('.labels .label').count()) === 1);
 
     // ---- the schedule -------------------------------------------------------------------------
-    await page.locator('[data-action="schedule"]').click();
+    await menu(page, 'schedule');
     const rowsShown = await page.locator('table[data-table="all"] tbody tr').count();
     const qty = await page.locator('table[data-table="types"] tbody tr td:first-child').allTextContents();
     ok('the schedule lists every door and window', rowsShown === total, { rowsShown, total });
     ok('the schedule groups openings into types to order', qty.reduce((a, b) => a + Number(b), 0) === total && qty.length < total, qty);
     const csv = await page.evaluate(() => likuloka.scheduleCsv());
     const lines = csv.trim().split(/\r?\n/);
-    ok('the schedule downloads as CSV in millimetres', lines.length === total + 1 && lines[0].startsWith('Ref,Type,Shape,Finish,Width (mm)') && lines.some(l => /^D\d\d,Door,Rounded,Timber,1000,2100,0,2100,150,Two bedroom house,Ground floor,Closed$/.test(l)), lines.slice(0, 3));
+    ok('the schedule downloads as CSV in millimetres, with products, frames and prices', lines.length === total + 1 && lines[0].startsWith('Ref,Type,Product,Description,Shape,Finish,Frame width (mm),Frame height (mm),Opening width (mm)')
+      && lines.some(l => /^D\d\d,Door,D-TIM-ARCH-980,Timber arched entrance door,Rounded,Timber,980,2090,1000,2100,0,2100,150,1450,Two bedroom house,Ground floor,Closed$/.test(l)), lines.slice(0, 3));
     const [dl] = await Promise.all([page.waitForEvent('download'), page.locator('[data-action="download-schedule"]').click()]);
     ok('the schedule’s CSV is offered as a file', /-schedule\.csv$/.test(dl.suggestedFilename()), dl.suggestedFilename());
     await page.locator('table[data-table="all"] .ref', { hasText: 'W01' }).click();
@@ -418,7 +427,7 @@ async function drag(page, level, grab, by, lift = 0) {
     await page.locator('[data-action="cut"]').click();
 
     // ---- import ----------------------------------------------------------------------------
-    await page.locator('[data-action="project"]').click();
+    await menu(page, 'project');
     await page.locator('[data-action="import"]').click();
     await page.locator('dialog[aria-labelledby="import-title"] textarea').fill(JSON.stringify({ name: 'Small flat', width: 8, depth: 6.5, layout: { dir: 'row', children: [
       { size: 4.75, name: 'Living room', type: 'living' },
@@ -430,12 +439,153 @@ async function drag(page, level, grab, by, lift = 0) {
     ok('importing a nested Roomlines layout adds a building', flat.name === 'Small flat' && flat.kids.filter(t => t === 'zone').length === 3 && flat.kids.filter(t => t === 'wall').length === 6, flat);
     ok('the import is placed beside the others', flat.origin[0] > 15, flat.origin);
     ok('the dialog closes', !(await page.locator('dialog[aria-labelledby="import-title"]').evaluate(d => d.open)));
-    await page.locator('[data-action="project"]').click();
+    await menu(page, 'project');
     await page.locator('[data-action="import"]').click();
     await page.locator('dialog[aria-labelledby="import-title"] textarea').fill('{ "rooms": [] }');
     await page.locator('dialog[aria-labelledby="import-title"]').getByRole('button', { name: 'Import', exact: true }).click();
     ok('a bad plan shows an error', (await page.locator('dialog[aria-labelledby="import-title"] .error').textContent()).length > 0);
     await page.locator('dialog[aria-labelledby="import-title"]').getByRole('button', { name: 'Cancel' }).click();
+
+
+    // ---- catalogue and build-ups -------------------------------------------------------------
+    const cat = await page.evaluate(() => { const c = likuloka.catalogue(); return { products: c.products.length, walls: c.wallTypes.length, problems: c.problems }; });
+    ok('the catalogue file is read', cat.products === 15 && cat.walls === 4 && cat.problems.length === 0, cat);
+    const sw = await page.evaluate(w => likuloka.getDoc().nodes[w].children.map(c => likuloka.getDoc().nodes[c]).find(o => o.kind === 'window'), id.backWall);
+    await page.evaluate(i => likuloka.select(i), sw.id);
+    await page.locator('.inspector select[aria-label="Product"]').selectOption('W-ALU-1980x1180');
+    let pw = await node(page, sw.id);
+    ok('choosing a product sets the opening for its frame plus the fitting gap', pw.product === 'W-ALU-1980x1180' && pw.width === 2 && pw.height === 1.2 && Math.abs(pw.sill - 0.89) < 1e-9, pw);
+    ok('the inspector shows the frame size', (await page.locator('.inspector [data-measure="frame"]').textContent()) === '1,980 × 1,180 mm');
+    const row = await page.evaluate(i => likuloka.schedule().find(r => r.id === i), sw.id);
+    ok('the schedule has the product, its frame and its price', row.product === 'W-ALU-1980x1180' && row.frameWidth === 1980 && row.price === 560, row);
+    await page.locator('.inspector .field', { hasText: 'Width' }).locator('input').fill('2.1');
+    await page.locator('.inspector .field', { hasText: 'Width' }).locator('input').press('Enter');
+    pw = await node(page, sw.id);
+    ok('changing a product’s size makes it a custom size', pw.product === null && Math.abs(pw.width - 2.1) < 1e-9, pw);
+    await page.keyboard.press('Control+z');
+    await page.keyboard.press('Control+z');
+    await page.evaluate(i => likuloka.select(i), id.partition);
+    await page.locator('.inspector select[aria-label="Build-up"]').selectOption('WT-STUD-100');
+    let pt = await node(page, id.partition);
+    ok('a wall takes a build-up from the catalogue, and its thickness', pt.wallType === 'WT-STUD-100' && pt.layers.length === 3 && Math.abs(pt.thickness - 0.1) < 1e-9, pt);
+    ok('the inspector lists the layers', (await page.locator('.inspector .layers li').count()) === 3);
+    await page.locator('.inspector .field', { hasText: 'Thickness' }).locator('input').fill('0.2');
+    await page.locator('.inspector .field', { hasText: 'Thickness' }).locator('input').press('Enter');
+    pt = await node(page, id.partition);
+    ok('typing a thickness makes the wall plain', pt.wallType === null && pt.layers.length === 0 && pt.thickness === 0.2, pt);
+    await page.keyboard.press('Control+z');
+    await page.keyboard.press('Control+z');
+
+    await menu(page, 'project');
+    await page.getByLabel('Fitting gap').fill('15');
+    await page.getByLabel('Fitting gap').press('Enter');
+    ok('the fitting gap changes every frame size', (await page.evaluate(() => likuloka.getDoc().settings.tolerance)) === 0.015
+      && (await page.evaluate(i => likuloka.schedule().find(r => r.id === i).frameWidth, sw.id)) === 1970);
+    await page.locator('dialog[aria-labelledby="project-title"]').getByRole('button', { name: 'Close' }).click();
+    await page.evaluate(() => likuloka.undo());
+    ok('undo puts the fitting gap back', (await page.evaluate(() => likuloka.getDoc().settings.tolerance)) === 0.01);
+
+    // ---- checks -------------------------------------------------------------------------------
+    const found = await page.evaluate(() => likuloka.checks().map(i => i.rule));
+    ok('the checks find narrow doors, a room without a door and long lintels', ['door-width', 'no-door', 'lintel-span', 'daylight'].every(r => found.includes(r)), found);
+    ok('the status bar counts the warnings', /\d+ warnings/.test(await page.locator('[data-action="checks-count"]').textContent()));
+    await menu(page, 'checks');
+    const firstIssue = await page.evaluate(() => likuloka.checks()[0]);
+    await page.locator('.issues li button').first().click();
+    ok('clicking an issue selects what it is about', (await state(page)).selection === firstIssue.node);
+    ok('the inspector shows that node’s issues', (await page.locator('.inspector .issues li').count()) >= 1);
+    const fixedDoor = await page.evaluate(() => {
+      const issue = likuloka.checks().find(i => i.rule === 'door-width');
+      likuloka.commit(d => likuloka.ops.updateOpening(d, issue.node, { width: 0.92 }), 'Widen');
+      const still = likuloka.checks().some(i => i.key === issue.key);
+      likuloka.undo();
+      return !still;
+    });
+    ok('widening a door clears its warning', fixedDoor);
+
+    // ---- client view ------------------------------------------------------------------------------
+    await menu(page, 'project');
+    await page.locator('[data-action="client-view"]').click();
+    await page.locator('dialog[aria-labelledby="project-title"]').getByRole('button', { name: 'Close' }).click();
+    ok('a designer can preview the client view', (await page.evaluate(() => likuloka.role())).kind === 'client' && (await page.locator('.bar .badge').isVisible()));
+    ok('the client view has no drawing tools', (await page.locator('[data-tool="wall"]').count()) === 0);
+    await page.keyboard.press('w');
+    ok('and the tool keys do nothing', (await state(page)).tool === 'select');
+    const refusedMove = await page.evaluate(i => likuloka.commit(d => likuloka.ops.offsetWall(d, i, 0.5), 'Move'), id.partition);
+    ok('a client cannot move a wall', !refusedMove && /client view/.test((await state(page)).error));
+    const z = await page.evaluate(i => likuloka.getDoc().nodes[i].use, id.studioZone);
+    ok('a client can change a room’s use', await page.evaluate(i => likuloka.commit(d => likuloka.ops.updateZone(d, i, { use: 'office' }), 'Use'), id.studioZone));
+    ok('a client can choose a product', await page.evaluate(i => { const p = likuloka.catalogue().products.find(x => x.code === 'W-ALU-1980x1180'); return likuloka.commit(d => likuloka.ops.updateOpening(d, i, { kind: p.kind, width: 2, height: 1.2, sill: 0.89, product: p.code }), 'Product'); }, sw.id));
+    const custom = await page.evaluate(i => likuloka.commit(d => likuloka.ops.updateOpening(d, i, { width: 1.7 }), 'Size'), sw.id);
+    ok('a client cannot type a custom size', !custom && /catalogue/.test((await state(page)).error), (await state(page)).error);
+    await page.evaluate(i => likuloka.select(i), id.partition);
+    ok('walls are shown to a client but locked', await page.locator('.inspector[data-locked="true"] fieldset[disabled]').count() > 0);
+    await page.evaluate(() => document.activeElement?.blur());
+    await page.keyboard.press('Delete');
+    ok('a client cannot delete', !!(await node(page, id.partition)));
+    await page.evaluate(() => { likuloka.undo(); likuloka.undo(); });
+    ok('a client’s changes undo', (await page.evaluate(i => likuloka.getDoc().nodes[i].use, id.studioZone)) === z);
+    await menu(page, 'project');
+    await page.locator('[data-action="designer-view"]').click();
+    await page.locator('dialog[aria-labelledby="project-title"]').getByRole('button', { name: 'Close' }).click();
+    ok('and back to the designer view', (await page.evaluate(() => likuloka.role())).kind === 'designer');
+
+    // ---- versions in the browser ---------------------------------------------------------------
+    await menu(page, 'versions');
+    const vdlg = page.locator('dialog[aria-labelledby="versions-title"]');
+    await vdlg.getByLabel('Your name').fill('Dana Designer');
+    await vdlg.getByLabel('Version note').fill('First design');
+    await vdlg.locator('[data-action="save-version"]').click();
+    await page.waitForFunction(() => document.querySelectorAll('.versions li').length === 1);
+    ok('a version is saved with a note and author', (await page.locator('.versions li').first().textContent()).includes('First design · Dana Designer'));
+    await vdlg.getByRole('button', { name: 'Close' }).click();
+    await page.evaluate(i => likuloka.commit(d => likuloka.ops.updateOpening(d, i, { finish: 'steel' }), 'Steel'), sw.id);
+    await page.evaluate(i => likuloka.commit(d => likuloka.ops.updateWall(d, i, { thickness: 0.3 }), 'Thick'), id.partition);
+    await menu(page, 'versions');
+    await vdlg.locator('[data-action="compare"]').click();
+    const changes = await page.locator('.versions [data-changes]').textContent();
+    ok('compare lists the schedule and building changes since a version, and nothing else', /Frame Aluminium → Steel/.test(changes) && /Building: 1 wall changed$/.test(changes), changes);
+    await vdlg.locator('[data-action="approve"]').click();
+    ok('approval needs the box ticked', await vdlg.locator('[data-action="confirm-approve"]').isDisabled());
+    await vdlg.locator('.approve input[type="checkbox"]').check();
+    await vdlg.locator('[data-action="confirm-approve"]').click();
+    await page.waitForFunction(() => !!document.querySelector('.versions [data-approval]'));
+    ok('a version is approved by name', (await page.locator('.versions [data-approval]').textContent()).startsWith('Approved by Dana Designer'));
+    ok('an approved version cannot be deleted', (await page.locator('.versions [data-action="delete-version"]').count()) === 0);
+    await vdlg.locator('[data-action="restore"]').click();
+    ok('restoring a version brings its design back as one undo step', (await node(page, sw.id)).finish === 'aluminium' && (await node(page, id.partition)).thickness === 0.15);
+    await page.evaluate(() => likuloka.undo());
+    ok('and it undoes', (await node(page, sw.id)).finish === 'steel');
+    await page.evaluate(() => { likuloka.undo(); likuloka.undo(); });
+
+    // ---- drawings and IFC ------------------------------------------------------------------------
+    const sheets = await page.evaluate(() => likuloka.drawings().map(s => ({ id: s.id, svg: s.svg })));
+    const withOpenings = await page.evaluate(() => Object.values(likuloka.getDoc().nodes).filter(n => n.type === 'wall' && n.children.length).length);
+    const levelsCount = await page.evaluate(() => Object.values(likuloka.getDoc().nodes).filter(n => n.type === 'level').length);
+    ok('drawings have a plan per level and the wall elevations, two to a sheet', sheets.length === levelsCount + Math.ceil(withOpenings / 2), { sheets: sheets.length, levelsCount, withOpenings });
+    ok('plans carry door and window tags, dimensions and a title block', /data-tag="D01"/.test(sheets[0].svg) && /data-part="dimension"/.test(sheets[0].svg) && /Scale 1:\d+ at A3/.test(sheets[0].svg));
+    ok('elevations give opening sizes and frames', sheets.some(sh => /frame 1480 × 1180/.test(sh.svg)));
+    await menu(page, 'drawings');
+    ok('the drawings dialog shows every sheet', (await page.locator('.sheets li').count()) === sheets.length);
+    const [svgFile] = await Promise.all([page.waitForEvent('download'), page.locator('[data-action="download-svg"]').first().click()]);
+    ok('a sheet downloads as SVG', /\.svg$/.test(svgFile.suggestedFilename()), svgFile.suggestedFilename());
+    await page.locator('dialog[aria-labelledby="drawings-title"]').getByRole('button', { name: 'Close' }).click();
+
+    const ifc = await page.evaluate(() => likuloka.ifc());
+    const WebIFC = require('web-ifc');
+    const api = new WebIFC.IfcAPI();
+    await api.Init();
+    const model = api.OpenModel(new TextEncoder().encode(ifc));
+    const count = t => api.GetLineIDsWithType(model, t).size();
+    const docCounts = await page.evaluate(() => { const n = Object.values(likuloka.getDoc().nodes); const c = t => n.filter(x => x.type === t).length; return { walls: c('wall'), doors: n.filter(x => x.type === 'opening' && x.kind === 'door').length, windows: n.filter(x => x.type === 'opening' && x.kind === 'window').length, slabs: c('slab'), zones: c('zone'), levels: c('level') }; });
+    ok('the IFC file opens in web-ifc with every element', count(WebIFC.IFCWALL) === docCounts.walls && count(WebIFC.IFCDOOR) === docCounts.doors && count(WebIFC.IFCWINDOW) === docCounts.windows
+      && count(WebIFC.IFCOPENINGELEMENT) === docCounts.doors + docCounts.windows && count(WebIFC.IFCSLAB) === docCounts.slabs && count(WebIFC.IFCSPACE) === docCounts.zones && count(WebIFC.IFCBUILDINGSTOREY) === docCounts.levels, docCounts);
+    let meshes = 0;
+    api.StreamAllMeshes(model, () => { meshes++; });
+    ok('its geometry builds', meshes >= docCounts.walls + docCounts.doors + docCounts.windows);
+    api.CloseModel(model);
+    const gids = [...ifc.matchAll(/IFC[A-Z]+\('([0-9A-Za-z_$]{22})',#/g)].map(m => m[1]);
+    ok('its GlobalIds are unique, and the same on every export', new Set(gids).size === gids.length && (await page.evaluate(() => likuloka.ifc())).includes(gids[0]));
 
     // ---- persistence -------------------------------------------------------------------------
     await page.waitForTimeout(700);
@@ -444,7 +594,6 @@ async function drag(page, level, grab, by, lift = 0) {
     ok('the scene is kept across a reload', await page.evaluate(() => likuloka.getDoc().roots.length === 3));
 
     // ---- projects ------------------------------------------------------------------------------
-    page.on('dialog', d => d.accept());
     const nameBox = page.locator('.bar .project-name');
     await nameBox.fill('Beach house');
     await nameBox.press('Enter');
@@ -462,13 +611,13 @@ async function drag(page, level, grab, by, lift = 0) {
     ok('undoing back to the saved state makes it saved again', !(await state(page)).project.unsaved);
     const savedId = st.project.id;
 
-    await page.locator('[data-action="project"]').click();
+    await menu(page, 'project');
     await page.locator('[data-action="new-blank"]').click();
     await frames(page);
     st = await state(page);
     const blank = await page.evaluate(() => { const d = likuloka.getDoc(); return { roots: d.roots.length, levels: d.nodes[d.roots[0]].children.length }; });
     ok('a new blank project has one building and a ground floor', blank.roots === 1 && blank.levels === 1 && st.project.id !== savedId && st.project.name === 'Untitled project', { blank, project: st.project });
-    await page.locator('[data-action="project"]').click();
+    await menu(page, 'project');
     await page.locator(`.projects li[data-project="${savedId}"] button`, { hasText: 'Open' }).click();
     await frames(page);
     st = await state(page);
@@ -482,7 +631,7 @@ async function drag(page, level, grab, by, lift = 0) {
 
     const text = await page.evaluate(() => likuloka.projects.file());
     ok('a project downloads as a file with its name', JSON.parse(text).format === 'likuloka3d' && JSON.parse(text).doc.name === 'Beach house');
-    await page.locator('[data-action="project"]').click();
+    await menu(page, 'project');
     const [pf] = await Promise.all([page.waitForEvent('download'), page.locator('[data-action="download-project"]').click()]);
     ok('the project file is named after the project', pf.suggestedFilename() === 'beach-house.likuloka.json', pf.suggestedFilename());
     await page.locator('dialog[aria-labelledby="project-title"]').getByRole('button', { name: 'Close' }).click();

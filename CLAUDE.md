@@ -35,6 +35,8 @@ Roomlines, a floor plan editor with a 3D view. `README.md` documents the plan fo
   cd web && npm install && npm test
   ```
 
+  After a change to the rules, `src/scene/cloud.ts`, versions or anything a client can do, also run `npm run test:rules` and `npm run test:cloud` (they start the Firebase emulators, which need Java).
+
 - It is a static export (`output: 'export'`). Do not add server code, API routes or anything that needs a Node server.
 - Packages are installed from npm and pinned to exact versions.
 - The scene document is immutable. Change it only through the operations in `src/scene/ops.ts`, called through `commit` or a gesture (`begin`, `preview`, `end`) in `src/scene/store.ts`. Never mutate a node: dirty tracking and undo both depend on a changed node having a new identity.
@@ -47,4 +49,9 @@ Roomlines, a floor plan editor with a 3D view. `README.md` documents the plan fo
 - Never read browser storage while rendering: the page is pre-rendered as static HTML, and a difference breaks hydration. Read it in effects or in components that render only once a dialog is open.
 - A `useFrame` callback must use a priority of 0 or below: a positive priority takes rendering over from React Three Fiber and the view goes blank.
 - The look follows likuloka.com, as above: cobalt `--accent`, Archivo, JetBrains Mono for figures, and `--crit` for errors and destructive actions.
-- All lengths are metres on a 0.25 m grid. Plan `x` is world `x`, plan `y` is world `z`.
+- All lengths are metres. Wall positions are on a 0.25 m grid; door and window sizes are kept to 5 mm (frames are ordered in millimetres) and wall layers to 0.1 mm. Plan `x` is world `x`, plan `y` is world `z`.
+- An opening's width and height are the structural opening. Frame sizes come from `frameSize` with the project's fitting gap; catalogue products are given by frame size.
+- Products, wall types, check limits and the schedule's columns live in `public/catalogue.json`, read at runtime. Do not hard-code products. The example products are not real ones; never add a manufacturer's real product data to this public repository.
+- What a client may change is decided in one place, `clientRefusal` in `src/scene/access.ts`, and enforced in the store's `commit` and `preview`. Do not enforce it only by hiding controls.
+- Cloud features read `cloud.json` at runtime and must keep working when it is absent. Never commit a real `public/cloud.json`. Every Firestore access rule is in `firebase/firestore.rules` and tested in `tests/rules.test.cjs`; change both together.
+- Buildability checks warn and never block an edit.

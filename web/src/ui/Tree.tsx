@@ -81,6 +81,7 @@ function Building({ id }: { id: Id }) {
   // Top floor first, as in a section.
   const order = levels.map((l, i) => [l, elev[i]] as const).sort((p, q) => q[1] - p[1]).map(p => p[0]);
   const mode = useEditor(s => s.views[id]?.mode ?? 'stack');
+  const client = useEditor(s => s.role.kind === 'client');
   return (
     <section className="building" aria-label="Building">
       <Row id={id} depth={0} />
@@ -91,7 +92,7 @@ function Building({ id }: { id: Id }) {
         ))}
       </div>
       {order.map(l => <Level key={l} id={l} building={id} />)}
-      <button type="button" className="add" onClick={() => commit(doc => addLevelAbove(doc, id)[0], 'Add level')}>+ Level on top</button>
+      {!client && <button type="button" className="add" onClick={() => commit(doc => addLevelAbove(doc, id)[0], 'Add level')}>+ Level on top</button>}
     </section>
   );
 }

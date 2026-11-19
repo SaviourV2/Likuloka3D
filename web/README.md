@@ -33,17 +33,79 @@ npm run build
 - **Doors and windows.** Press D or choose "Door", or N or "Window", then click a wall: the opening is centred on the click and kept inside the wall. Drag a door or window to slide it along its wall. The inspector sets its width, height, sill and place along the wall, and can turn a door into a window. An opening that does not fit, overlaps another or is taller than its wall is refused with a message. When a wall end moves, the doors and windows in the walls that stretch keep their place in the room. Deleting a wall deletes its openings.
 - **Door and window options.** In the inspector: a square or rounded (arched) head, a frame of timber, steel, aluminium or uPVC, and drawn closed or open (the leaf or sash swings out). Rounding a head that is too short for its arch raises it just enough. The finishes are generic colours, not any manufacturer's products.
 - **Measurements.** The inspector gives a door's or window's size, head height, sill height, arch radius and wall depth in millimetres. In the view, the selected door, window or wall shows its size; Measure (M) shows the size of every door and window.
-- **Schedule.** Lists every door and window with a reference (D01, W01…), its sizes in millimetres and where it is, and groups them into types with quantities to order. Click a reference to select that opening. "Download CSV" gives the same list as a spreadsheet file.
-- **Projects.** Name the project in the toolbar. Save (Ctrl+S) keeps it in this browser; the button shows when there are unsaved changes, and undoing back to the saved state counts as saved. The Project dialog lists saved projects to open or delete, starts a new blank project or one from the sample, downloads the project as a `.likuloka.json` file and opens such files, and imports Roomlines plans. The working copy is also kept as a draft, so a reload never loses work.
+- **Catalogue products.** The inspector's Product list holds your doors and windows from `catalogue.json`. Choosing one sets the type, head, frame, frame size and, from those, the structural opening. Changing the size by hand makes it a custom size.
+- **Structural opening and frame.** An opening's width and height are the hole in the wall. The frame is smaller by the project's fitting gap (Project, Projects and files, Settings; 10 mm a side by default, and at a door's head). Door and window sizes are kept to 5 mm; wall positions stay on the 0.25 m grid.
+- **Wall build-ups.** The inspector's Build-up list gives a wall a catalogue wall type: its layers (structure, insulation, cavity, finish) and the thickness they add up to. Typing a thickness makes it a plain wall again. Plans draw the layers, and the IFC export carries them.
+- **Schedule.** Lists every door and window with a reference (D01, W01…), its product, structural opening and frame size in millimetres and where it is, and groups them into types with quantities, unit prices and a total to order. Click a reference to select that opening. "Download CSV" gives the list as a spreadsheet, with the catalogue's columns.
+- **Checks.** Buildability checks run as you work: narrow doors, low door heads, bedrooms without an escape window, rooms without a door, rooms short of daylight, too little wall above an opening for a lintel, spans that need an engineered lintel, and openings that run into a joining wall. The status bar counts them; Project, Checks lists them, and clicking one selects and frames it; the inspector shows the selected node's. They never block an edit. Their limits are the catalogue's `rules`: set them to the regulations where you build.
+- **Client view.** A client chooses from what the designer drew: a door or window's product, frame, head and open or closed, and a room's name and use. Walls, levels, slabs and where openings sit stay as drawn, and a size can only change by choosing a catalogue product. This is checked on every edit by comparing the documents before and after (`src/scene/access.ts`), so it holds for buttons, keys, drags and scripts. A designer can try it with Project, Projects and files, Preview as client; someone who opens a client share link gets it and cannot leave it.
+- **Versions and sign-off.** Project, Versions and sign-off saves the design as a numbered version with a note and an author. Compare shows what changed since a version: door and window changes field by field, and the rest counted by kind. A client approves a version by typing their name and ticking the box; the approval records who and when, and an approved version cannot be deleted. A designer can restore a version, as one undoable step. The approval is a record of agreement, not a verified electronic signature.
+- **Drawings.** Project, Drawings gives A3 sheets to scale: a plan of each level (walls cut with their layers, door swings, glazing, rooms with areas, wall lengths, overall dimensions, door and window tags matching the schedule, title block and scale bar), and elevations of every wall with doors or windows (chain dimensions, opening and frame sizes, sill and head heights). "Print or save as PDF" prints them, one sheet a page; each sheet also downloads as SVG.
+- **IFC.** Project, Export IFC for BIM writes an IFC4 file for engineers and BIM tools: buildings and storeys, walls with their build-up as material layers, openings voiding the walls, doors and windows with their frame sizes and properties (reference, product, finish, price), slabs and rooms. Element ids are derived from the project, so exporting again updates the same elements. Rounded heads are exported as rectangular openings, with the shape in the properties.
+- **Projects.** Name the project in the toolbar. Save (Ctrl+S) saves it where it lives: in this browser, or in the cloud. The button shows when there are unsaved changes, and undoing back to the saved state counts as saved. Project, Projects and files lists the projects saved in this browser to open or delete, starts a new blank project or one from the sample, downloads the project as a `.likuloka.json` file and opens such files, sets the fitting gap, and imports Roomlines plans. The working copy is also kept as a draft, so a reload never loses work.
+- **Cloud and sharing.** With cloud set up (see "Cloud projects"), Project, Cloud and sharing signs in with Google or email, moves a project to the cloud, lists your cloud projects, makes share links for clients and designers, and lists the people on a project; the owner can remove them. When someone else saves the open project, the status bar says so and offers Reload, and a save from an out-of-date copy is refused rather than overwriting theirs.
 - **Draw walls.** Press W or choose "Draw walls", then click on the floor. Each click after the first adds a wall from the last point, so walls chain. Escape ends the run; Escape again goes back to Select.
 - **Cut walls.** On by default. Walls are drawn up to 1.2 m so you can see into the rooms. Turn it off to see full height.
 - **Inspector.** On the right. It edits the selected node's numbers. Every change is one undo step.
 - **Undo and redo.** Ctrl+Z and Ctrl+Shift+Z (or Ctrl+Y), or the toolbar. A whole drag is one step.
-- **Import.** "Import plan" reads a Roomlines plan (see the repository README, "Plan format"), in either the `rooms` or the nested `layout` form. It is added as a new building: each room becomes a zone, the room edges become walls (an edge two rooms share becomes one wall), and the outline of all the rooms becomes the slab.
+- **Import.** Project, Projects and files, Import a Roomlines plan reads a Roomlines plan (see the repository README, "Plan format"), in either the `rooms` or the nested `layout` form. It is added as a new building: each room becomes a zone, the room edges become walls (an edge two rooms share becomes one wall), and the outline of all the rooms becomes the slab.
 
-All lengths are metres on a 0.25 m grid. Plan `x` runs left to right and plan `y` top to bottom; in 3D, plan `y` is world `z`.
+All lengths are metres. Wall positions are on a 0.25 m grid; door and window sizes are kept to 5 mm and wall layers to 0.1 mm. Plan `x` runs left to right and plan `y` top to bottom; in 3D, plan `y` is world `z`.
 
 Projects are stored in the browser's local storage: `likuloka3d.projects` lists them, each is under `likuloka3d.project:<id>`, and the working copy is `likuloka3d.draft`. Scenes saved by earlier versions (including `likuloka3d.scene`) are brought up to date when they are opened.
+
+## The catalogue
+
+`public/catalogue.json` is read when the editor opens, so it can be changed on the server without rebuilding (the same file is built in as a fallback). Everything in it is in millimetres. The products and prices in it are examples: replace them with yours.
+
+| Key | What it holds |
+|---|---|
+| `currency` | The currency code for prices, such as `USD`, `GBP` or `IDR`. |
+| `products` | Doors and windows: `code`, `name`, `kind` (`door` or `window`), `shape` (`square` or `arched`), `finish` (`timber`, `steel`, `aluminium` or `upvc`), frame `width` and `height`, a window's default `sill`, and `price`. |
+| `wallTypes` | Build-ups: `code`, `name` and `layers`, each with `name`, `kind` (`structure`, `insulation`, `cavity` or `finish`) and `thickness`. |
+| `rules` | The checks' limits: `minDoorWidth`, `minDoorHeadHeight`, `escapeWindowArea` (m²), `escapeWindowMaxSill`, `daylightRatio` (window area over floor area), `minWallAboveOpening`, `lintelSpanNeedsEngineer`, `junctionClearance`. The defaults are common minimums, not any one country's code. |
+| `scheduleColumns` | The CSV's columns, in order, from: `ref`, `kind`, `product`, `productName`, `shape`, `finish`, `frameWidth`, `frameHeight`, `width`, `height`, `sill`, `head`, `wall`, `price`, `building`, `level`, `state`. |
+
+An entry that is not valid is skipped, and the Checks dialog says which.
+
+## Cloud projects
+
+Cloud projects use Firebase: Authentication for accounts and Firestore for projects, versions and share links. The site stays static: the browser talks to Firebase directly, and `firebase/firestore.rules` decides who may read and write what. Without `cloud.json`, cloud features say they are not set up and everything else works.
+
+To set it up:
+
+1. Create a project in the [Firebase console](https://console.firebase.google.com/).
+2. In Authentication, Sign-in method, turn on **Email/Password** and **Google**. Under Settings, Authorized domains, add the domain the editor is served from.
+3. Create a **Firestore** database in production mode.
+4. Deploy the rules from this folder:
+
+   ```bash
+   npx firebase login
+   ```
+
+   ```bash
+   npx firebase use --add
+   ```
+
+   ```bash
+   npm run deploy:rules
+   ```
+
+5. In Project settings, Your apps, add a **Web app**. Copy `public/cloud.example.json` to `public/cloud.json` (beside `index.html` once built) and fill in its `apiKey`, `authDomain`, `projectId` and `appId`. These values are public by design. `cloud.json` is not committed; add it when deploying.
+6. Deploy the site anywhere static, or to Firebase Hosting with `npm run deploy:hosting`.
+
+What the rules enforce, tested against the emulator by `tests/rules.test.cjs`:
+
+- Only members read a project; nobody can list projects that are not theirs.
+- The owner and designers change the scene and name; only the owner removes members or deletes the project; nobody changes ownership.
+- A client changes the scene and name only.
+- Joining needs an invite token and gets exactly that invite's role; an invite cannot make an owner.
+- Every save moves `sceneVersion` on by one and is signed by its saver, so two people cannot overwrite each other unnoticed.
+- Versions never change once saved; each is approved at most once, by the member approving, with the server's time; approved versions cannot be deleted.
+
+Which parts of the scene a client may change is enforced by the editor, because the scene is stored as one text field. To enforce it on the server too, add a Cloud Function that compares a client's saved scene with the previous one using `clientRefusal` from `src/scene/access.ts`, and rejects the save; that needs Firebase's Blaze plan.
+
+Data: `projects/{id}` holds `name`, `ownerUid`, `members` (uid to role), `memberUids`, `memberNames`, `scene` (the scene as JSON), `sceneVersion`, `updatedAt` and `updatedBy`; `projects/{id}/versions/{id}` holds `number`, `createdAt`, `author`, `authorUid`, `note`, `scene` and `approval`; `invites/{token}` holds `projectId`, `role`, `createdBy`, `createdAt` and `projectName`.
 
 ## How it is built
 
@@ -110,6 +172,14 @@ likuloka.projects.save(); likuloka.projects.list(); likuloka.projects.open(id)
 likuloka.projects.file()          // the project as file text; projects.openFile(text) opens one
 likuloka.schedule()               // every door and window, sizes in mm; scheduleCsv() as CSV
 likuloka.setMeasure(true)
+likuloka.catalogue()              // products, wall types, rules
+likuloka.checks()                 // buildability issues
+likuloka.setRole({ kind: 'client', fixed: false })   // or { kind: 'designer' }
+likuloka.versions.list()          // versions of the open project
+likuloka.drawings()               // [{ id, title, svg }]
+likuloka.ifc()                    // the IFC4 file as text
+likuloka.save()                   // to the cloud or this browser, wherever the project lives
+likuloka.cloud.state(); likuloka.cloud.signIn(email, password); likuloka.cloud.invite('client')
 likuloka.focus(id)                // points the camera at a node
 likuloka.stats()                  // what each system updated, and the ids changed in the last frame that changed any
 likuloka.project(levelId, x, y)   // the screen position of a plan point
@@ -118,11 +188,12 @@ likuloka.backend()                // 'WebGPU' or 'WebGL 2'
 
 ## Tests
 
-`tests/e2e.cjs` builds nothing itself: it serves `out/` and drives the editor in Chromium with Playwright. It checks the hierarchy, the Roomlines import, dirty tracking (one edit updates one entity), undo and redo, real mouse drags of walls, wall ends, slab corners, edge midpoints, zones and doors, placing doors and windows and their rules, their shape, frame and open options, measurements, the schedule and its CSV, saving, opening, downloading and deleting projects, opening older scenes, stack, explode and solo, the wall tool, the inspector, import, persistence and the phone layout.
+| Suite | What it checks |
+|---|---|
+| `npm test` | Builds, then `tests/e2e.cjs` serves `out/` and drives the editor in Chromium on WebGPU: the hierarchy, the Roomlines import, dirty tracking (one edit updates one entity), undo and redo, real mouse drags of walls, wall ends, slab corners, edge midpoints, zones and doors, doors and windows and their options and rules, measurements, the catalogue, build-ups, the fitting gap, checks, the client view, versions with comparison, approval and restore, the schedule and its CSV, drawings, the IFC file (parsed and meshed with web-ifc), projects and files, older scenes, stack, explode and solo, the wall tool, persistence and the phone layout. |
+| `npm run test:webgl` | The same, on the WebGL 2 fallback. |
+| `npm run test:rules` | `tests/rules.test.cjs`: every Firestore rule, against the Firestore emulator. |
+| `npm run test:cloud` | `tests/cloud.e2e.cjs`: a designer and a client in two browsers against the Auth and Firestore emulators: accounts, moving a project to the cloud, share links, joining, the client's limits, saving, the notice and refusal when someone else saved, versions and approval in the cloud, removing a member, and reloads. |
+| `npm run test:all` | All four. |
 
-```bash
-npm test                                         # builds, then tests on WebGPU
-LIKULOKA_RENDERER=webgl node tests/e2e.cjs       # the WebGL 2 fallback
-```
-
-Headless Chromium has no GPU here, so the tests use SwiftShader's Vulkan adapter for WebGPU. If that browser cannot start, they run on WebGL 2.
+Headless Chromium has no GPU here, so the tests use SwiftShader's Vulkan adapter for WebGPU. If that browser cannot start, they run on WebGL 2. The Firebase emulators need Java.

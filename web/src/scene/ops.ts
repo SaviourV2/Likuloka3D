@@ -4,9 +4,9 @@
  * is what dirty tracking and undo rely on. Invalid input throws a SceneError.
  */
 import {
-  GRID, MIN_ARCH_SIDE, MIN_WALL, OPENING_DEFAULTS, OPENING_FINISHES, OPENING_MARGIN, OPENING_SHAPES, ROOM_TYPES, UNTITLED,
+  DEFAULT_SETTINGS, GRID, MIN_ARCH_SIDE, SIZE_STEP, MIN_WALL, OPENING_DEFAULTS, OPENING_FINISHES, OPENING_MARGIN, OPENING_SHAPES, ROOM_TYPES, UNTITLED,
   type BuildingNode, type Id, type LevelNode, type NodeOf, type NodeType, type OpeningFinish, type OpeningKind, type OpeningNode,
-  type OpeningShape, type OpeningState, type RoomType, type SceneDoc, type SceneNode, type SlabNode, type Vec2, type WallNode, type ZoneNode,
+  type OpeningShape, type OpeningState, type ProjectSettings, type RoomType, type WallLayer, type SceneDoc, type SceneNode, type SlabNode, type Vec2, type WallNode, type ZoneNode,
 } from './types';
 
 export class SceneError extends Error {
@@ -56,7 +56,17 @@ export function area(points: readonly Vec2[]): number {
   return s / 2;
 }
 
-export const emptyDoc = (name = UNTITLED): SceneDoc => ({ name, nodes: {}, roots: [] });
+export const emptyDoc = (name = UNTITLED): SceneDoc => ({ name, settings: DEFAULT_SETTINGS, nodes: {}, roots: [] });
+
+const toSize = (v: number) => Math.round(v / SIZE_STEP) * SIZE_STEP;
+const round3 = (v: number) => Math.round(v * 1000) / 1000;
+
+export function updateSettings(doc: SceneDoc, patch: Partial<ProjectSettings>): SceneDoc {
+  const tolerance = patch.tolerance === undefined ? doc.settings.tolerance : finite(patch.tolerance, 'tolerance');
+  if (tolerance < 0 || tolerance > 0.05) throw new SceneError('The fitting gap must be between 0 and 50 mm');
+  const t = round3(tolerance);
+  return t === doc.settings.tolerance ? doc : { ...doc, settings: { ...doc.settings, tolerance: t } };
+}
 
 export function renameProject(doc: SceneDoc, name: string): SceneDoc {
   const trimmed = name.trim().slice(0, 80);
@@ -138,19 +148,51 @@ export function addLevelAbove(doc: SceneDoc, buildingId: Id): [SceneDoc, Id] {
 
 // ---- walls -------------------------------------------------------------------
 
-export interface WallInput { a: Vec2; b: Vec2; thickness?: number; height?: number; name?: string }
+export interface WallInput {
+  a: Vec2; b: Vec2; thickness?: number; height?: number; name?: string;
+  layers?: readonly WallLayer[]; wallType?: string | null;
+}
+
+const LAYER_KINDS = ['structure', 'insulation', 'cavity', 'finish'];
+function layersOf(input: unknown): WallLayer[] {
+  if (!Array.isArray(input)) throw new SceneError('A build-up is a list of layers');
+  return input.map((l, i) => {
+    const layer = l as Partial<WallLayer>;
+    if (!LAYER_KINDS.includes(layer?.kind as string)) throw new SceneError(`Layer ${i + 1} must be structure, insulation, cavity or finish`);
+    const t = finite(layer.thickness, `layer ${i + 1} thickness`);
+    if (t < 0.003 || t > 0.6) throw new SceneError(`Layer ${i + 1} must be between 3 and 600 mm thick`);
+    // Layers are kept to 0.1 mm: boards come in sizes like 12.5 mm.
+    return { name: String(layer.name ?? layer.kind).slice(0, 40), thickness: Math.round(t * 10000) / 10000, kind: layer.kind as WallLayer['kind'] };
+  });
+}
 
 function wallFrom(level: LevelNode, input: WallInput, id: Id, prev?: WallNode): WallNode {
   const a = point(input.a, 'a');
   const b = point(input.b, 'b');
   if (Math.hypot(b[0] - a[0], b[1] - a[1]) < MIN_WALL - 1e-6) throw new SceneError(`A wall must be at least ${MIN_WALL} m long`);
+  // A build-up sets the thickness; a thickness typed on its own makes the wall plain.
+  let layers: readonly WallLayer[] = prev?.layers ?? [];
+  let wallType = prev?.wallType ?? null;
+  let thickness = prev?.thickness ?? 0.2;
+  if (input.layers !== undefined && input.layers !== prev?.layers) {
+    layers = layersOf(input.layers);
+    wallType = input.wallType ?? null;
+    if (layers.length) thickness = Math.round(layers.reduce((s, l) => s + l.thickness, 0) * 10000) / 10000;
+  } else if (input.thickness !== undefined && input.thickness !== prev?.thickness) {
+    thickness = positive(input.thickness, 'thickness', 0.05, 1);
+    layers = [];
+    wallType = null;
+  } else if (!prev && input.thickness !== undefined) {
+    thickness = positive(input.thickness, 'thickness', 0.05, 1);
+  }
+  if (thickness < 0.05 || thickness > 1) throw new SceneError('A wall must be between 50 and 1000 mm thick');
   return {
     id, type: 'wall', parent: level.id,
     children: prev?.children ?? [],
     name: input.name?.trim() || prev?.name || 'Wall',
-    a, b,
-    thickness: input.thickness === undefined ? (prev?.thickness ?? 0.2) : positive(input.thickness, 'thickness', 0.05, 1),
+    a, b, thickness,
     height: input.height === undefined ? (prev?.height ?? level.height) : positive(input.height, 'height', 0.5, 10),
+    layers, wallType,
   };
 }
 
@@ -278,6 +320,7 @@ const snapOffset = (v: number) => Math.round(v / (GRID / 2)) * (GRID / 2);
 export interface OpeningInput {
   kind: OpeningKind; offset: number; width?: number; height?: number; sill?: number; name?: string;
   shape?: OpeningShape; finish?: OpeningFinish; state?: OpeningState;
+  product?: string | null;
 }
 
 function openingFrom(wall: WallNode, input: OpeningInput, id: Id, prev?: OpeningNode): OpeningNode {
@@ -285,8 +328,8 @@ function openingFrom(wall: WallNode, input: OpeningInput, id: Id, prev?: Opening
   const d = OPENING_DEFAULTS[input.kind];
   const kindChanged = prev && prev.kind !== input.kind;
   const pick = (v: number | undefined, fallback: number) => (v === undefined ? fallback : v);
-  const width = positive(pick(input.width, kindChanged ? d.width : (prev?.width ?? d.width)), 'width', GRID, 10);
-  const height = positive(pick(input.height, kindChanged ? d.height : (prev?.height ?? d.height)), 'height', 0.3, 10);
+  const width = toSize(positive(pick(input.width, kindChanged ? d.width : (prev?.width ?? d.width)), 'width', 0.3, 10));
+  const height = toSize(positive(pick(input.height, kindChanged ? d.height : (prev?.height ?? d.height)), 'height', 0.3, 10));
   const sillIn = pick(input.sill, kindChanged ? d.sill : (prev?.sill ?? d.sill));
   const sill = Math.round(finite(sillIn, 'sill') * 100) / 100;
   if (sill < 0) throw new SceneError('sill cannot be below the floor');
@@ -296,12 +339,14 @@ function openingFrom(wall: WallNode, input: OpeningInput, id: Id, prev?: Opening
   if (!OPENING_FINISHES.includes(finish)) throw new SceneError('The finish is timber, steel, aluminium or uPVC');
   const state = input.state ?? prev?.state ?? 'closed';
   if (state !== 'open' && state !== 'closed') throw new SceneError('An opening is open or closed');
+  // Changing what an opening is or its size makes it custom, unless a product is given with the change.
+  const changesProduct = !prev || (['kind', 'width', 'height', 'shape', 'finish'] as const).some(k => input[k] !== undefined && input[k] !== prev[k]);
+  const product = input.product !== undefined ? input.product : changesProduct ? null : (prev?.product ?? null);
   return {
     id, type: 'opening', parent: wall.id, kind: input.kind,
     name: input.name?.trim() || (kindChanged || !prev ? (input.kind === 'door' ? 'Door' : 'Window') : prev.name),
     offset: snapOffset(finite(input.offset, 'offset')),
-    width: Math.round(width / GRID) * GRID || GRID,
-    height, sill, shape, finish, state,
+    width, height, sill, shape, finish, state, product,
   };
 }
 
@@ -331,9 +376,10 @@ export function updateOpening(doc: SceneDoc, id: Id, patch: Partial<OpeningInput
   const o = get(doc, id, 'opening');
   const wall = get(doc, o.parent, 'wall');
   // A door turned into a window (or back) takes that kind's height and sill, and keeps its place and width.
+  // The product is not carried over from the old opening: it stays only if nothing it fixes changes.
   let base: OpeningInput = patch.kind && patch.kind !== o.kind
     ? { kind: patch.kind, offset: o.offset, width: o.width, shape: o.shape, finish: o.finish, state: o.state }
-    : o;
+    : { ...o, product: undefined };
   // Rounding a head that is too short for its arch raises it just enough, unless a height is given.
   const shape = patch.shape ?? base.shape;
   const width = patch.width ?? base.width ?? o.width;
@@ -502,19 +548,21 @@ export function migrate(raw: unknown): unknown {
   if (!doc.nodes || typeof doc.nodes !== 'object') return raw;
   const nodes: Record<string, Record<string, unknown>> = {};
   for (const [id, n] of Object.entries(doc.nodes)) {
-    if (n?.type === 'wall' && !n.children) nodes[id] = { ...n, children: [] };
+    if (n?.type === 'wall') nodes[id] = { children: [], layers: [], wallType: null, ...n };
     else if (n?.type === 'opening') {
       const kind = n.kind === 'window' ? 'window' : 'door';
-      nodes[id] = { shape: 'square', finish: OPENING_DEFAULTS[kind].finish, state: 'closed', ...n };
+      nodes[id] = { shape: 'square', finish: OPENING_DEFAULTS[kind].finish, state: 'closed', product: null, ...n };
     } else nodes[id] = n;
   }
-  return { ...doc, name: typeof doc.name === 'string' && doc.name.trim() ? doc.name : UNTITLED, nodes };
+  const settings = { ...DEFAULT_SETTINGS, ...(typeof (doc as { settings?: unknown }).settings === 'object' ? (doc as { settings: object }).settings : {}) };
+  return { ...doc, name: typeof doc.name === 'string' && doc.name.trim() ? doc.name : UNTITLED, settings, nodes };
 }
 
 export function validate(doc: unknown): SceneDoc {
   if (!doc || typeof doc !== 'object') throw new SceneError('Not a scene');
   const d = doc as SceneDoc;
   if (typeof d.name !== 'string') throw new SceneError('The project has no name');
+  if (!d.settings || typeof d.settings.tolerance !== 'number') throw new SceneError('The project has no settings');
   if (!Array.isArray(d.roots) || !d.nodes || typeof d.nodes !== 'object') throw new SceneError('Not a scene');
   const seen = new Set<Id>();
   const walk = (id: Id, parent: Id | null, expect: NodeType[]) => {

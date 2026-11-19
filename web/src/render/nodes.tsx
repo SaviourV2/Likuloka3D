@@ -165,7 +165,8 @@ function Handles({ level }: { level: Id }) {
   });
   const tool = useEditor(s => s.tool);
   const cut = useEditor(s => s.cut);
-  if (!node || tool !== 'select') return null;
+  const client = useEditor(s => s.role.kind === 'client');
+  if (!node || tool !== 'select' || client) return null;
   if (node.type === 'wall') {
     const top = cut ? Math.min(node.height, CUT) : node.height;
     return (

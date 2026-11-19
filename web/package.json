@@ -6,10 +6,17 @@
     "dev": "next dev",
     "build": "next build",
     "typecheck": "tsc --noEmit",
-    "test": "next build && node tests/e2e.cjs"
+    "test": "next build && node tests/e2e.cjs",
+    "test:webgl": "LIKULOKA_RENDERER=webgl node tests/e2e.cjs",
+    "test:rules": "firebase emulators:exec --only firestore --project demo-likuloka \"node tests/rules.test.cjs\"",
+    "test:cloud": "firebase emulators:exec --only auth,firestore --project demo-likuloka \"node tests/cloud.e2e.cjs\"",
+    "test:all": "npm test && npm run test:webgl && npm run test:rules && npm run test:cloud",
+    "deploy:rules": "firebase deploy --only firestore:rules,firestore:indexes",
+    "deploy:hosting": "npm run build && firebase deploy --only hosting"
   },
   "dependencies": {
     "@react-three/fiber": "9.8.2",
+    "firebase": "13.4.0",
     "next": "16.4.6",
     "react": "19.3.1",
     "react-dom": "19.3.1",
@@ -17,10 +24,13 @@
     "zustand": "5.1.0"
   },
   "devDependencies": {
+    "@firebase/rules-unit-testing": "6.0.0",
     "@types/node": "22.20.5",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
     "@types/three": "0.187.0",
-    "typescript": "5.9.3"
+    "firebase-tools": "15.37.0",
+    "typescript": "5.9.3",
+    "web-ifc": "0.0.79"
   }
 }

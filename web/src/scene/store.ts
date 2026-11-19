@@ -12,6 +12,8 @@ import { createStore } from 'zustand/vanilla';
 import { useStore } from 'zustand';
 import { ancestor, emptyDoc, migrate, remove, validate, SceneError } from './ops';
 import type { Id, LevelMode, OpeningKind, SceneDoc, Vec2 } from './types';
+import { BUNDLED, type Catalogue } from './catalogue';
+import { clientRefusal, type Role } from './access';
 
 export const HISTORY_LIMIT = 200;
 
@@ -28,6 +30,14 @@ export type Interaction =
 export type Tool = 'select' | 'wall' | 'door' | 'window';
 
 export interface BuildingView { mode: LevelMode; solo: Id | null }
+
+export interface CloudUser { uid: string; name: string; email: string | null }
+export interface CloudState {
+  status: 'off' | 'starting' | 'signed-out' | 'signed-in' | 'error';
+  user: CloudUser | null;
+  /** Something to tell the person: an error, or that someone else saved the project. */
+  notice: { kind: 'error' | 'remote'; text: string } | null;
+}
 
 export interface EditorState {
   doc: SceneDoc;
@@ -48,7 +58,17 @@ export interface EditorState {
    * The open project: its id in browser storage, and the document as it was
    * last saved. The project has unsaved changes when `doc !== saved`.
    */
-  project: { id: string; saved: SceneDoc | null; savedAt: number | null };
+  project: {
+    id: string; saved: SceneDoc | null; savedAt: number | null; where: 'local' | 'cloud';
+    /** For a cloud project: the save this copy is based on, which the next save must follow. */
+    cloudVersion?: number;
+  };
+  /** Cloud accounts and sharing (`cloud.ts`). `off` when this site has no cloud set up. */
+  cloud: CloudState;
+  /** Products, wall types and check thresholds, from `catalogue.json`. Not part of the document. */
+  catalogue: Catalogue;
+  /** Who is editing. A client's edits are limited to choices (`access.ts`); `fixed` when it came from a share link. */
+  role: Role;
   error: string | null;
 }
 
@@ -64,7 +84,10 @@ const initial: EditorState = {
   interaction: { kind: 'idle' },
   cut: true,
   measure: false,
-  project: { id: 'project-new', saved: null, savedAt: null },
+  project: { id: 'project-new', saved: null, savedAt: null, where: 'local' },
+  catalogue: BUNDLED,
+  role: { kind: 'designer' },
+  cloud: { status: 'off', user: null, notice: null },
   error: null,
 };
 
@@ -98,6 +121,11 @@ function fail(e: unknown): false {
   return false;
 }
 
+/** The role's limits on an edit: null when it may be made. */
+function guard(prev: SceneDoc, next: SceneDoc): string | null {
+  return state().role.kind === 'client' ? clientRefusal(prev, next) : null;
+}
+
 /** Applies one edit as one undo step. Returns false and sets `error` if it is refused. */
 export function commit(edit: (doc: SceneDoc) => SceneDoc, label: string): boolean {
   const s = state();
@@ -105,6 +133,8 @@ export function commit(edit: (doc: SceneDoc) => SceneDoc, label: string): boolea
   let next: SceneDoc;
   try { next = edit(state().doc); } catch (e) { return fail(e); }
   if (next === state().doc) return true;
+  const refused = guard(state().doc, next);
+  if (refused) return fail(refused);
   const cur = state();
   set({
     doc: next,
@@ -133,6 +163,8 @@ export function preview(edit: (base: SceneDoc) => SceneDoc): boolean {
   if (!g) return false;
   try {
     const next = edit(g.doc);
+    const refused = guard(g.doc, next);
+    if (refused) return fail(refused);
     if (next !== state().doc) set({ doc: next, error: null });
     return true;
   } catch (e) {
@@ -228,6 +260,8 @@ export function setView(buildingId: Id, patch: Partial<BuildingView>) {
 
 export function setTool(tool: Tool) {
   const s = state();
+  // Clients only select: drawing walls and placing openings are the designer's.
+  if (s.role.kind === 'client' && tool !== 'select') return;
   if (s.gesture) cancel();
   const level = s.activeLevel;
   set({
@@ -255,3 +289,18 @@ export function setMeasure(measure: boolean) {
 }
 
 export const isUnsaved = (s: EditorState) => s.doc !== s.project.saved;
+
+export function setCatalogue(catalogue: Catalogue) {
+  set({ catalogue });
+}
+
+/** Switches who is editing. A role that came from a share link (`fixed`) cannot be left. */
+export function setRole(role: Role): boolean {
+  const s = state();
+  if (s.role.kind === 'client' && s.role.fixed) return false;
+  if (s.gesture) cancel();
+  set({ role, ...(role.kind === 'client' ? { tool: 'select' as Tool, interaction: { kind: 'idle' } as Interaction } : {}) });
+  return true;
+}
+
+export const isClient = (s: EditorState) => s.role.kind === 'client';
