@@ -249,6 +249,26 @@ async function drag(page, level, grab, by, lift = 0) {
     ok('a click on a wall selects the wall, not the zone behind it', (await state(page)).selection === id.partition, await state(page));
     await page.keyboard.press('Control+z');
 
+    // ---- moving a building ---------------------------------------------------------------------
+    await page.evaluate(i => likuloka.select(i), id.studioSlab);
+    await frames(page);
+    const origin0 = (await node(page, id.studio)).origin;
+    const steps1 = (await state(page)).undo;
+    await drag(page, id.studioLevel, [3, 1.75], [2, 1], 0.08);
+    const origin1 = (await node(page, id.studio)).origin;
+    ok('dragging the ring moves the whole building on the grid', origin1[0] > origin0[0] && origin1[1] > origin0[1] && (origin1[0] * 4) % 1 === 0 && (origin1[1] * 4) % 1 === 0, { origin0, origin1 });
+    ok('moving a building is one undo step and changes nothing inside it', (await state(page)).undo === steps1 + 1
+      && JSON.stringify((await node(page, id.partition)).a) === '[4.5,0]');
+    await page.evaluate(() => likuloka.undo());
+    ok('undo puts the building back', JSON.stringify((await node(page, id.studio)).origin) === JSON.stringify(origin0));
+    const clientMove = await page.evaluate(([b]) => {
+      likuloka.setRole({ kind: 'client', fixed: false });
+      const ok = likuloka.commit(d => likuloka.ops.setOrigin(d, b, [30, 0]), 'Move');
+      likuloka.setRole({ kind: 'designer' });
+      return ok;
+    }, [id.studio]);
+    ok('a client cannot move a building', !clientMove);
+
     // ---- stack, explode and solo ---------------------------------------------------------
     await page.evaluate(i => likuloka.setView(i, { mode: 'explode' }), id.house);
     await frames(page);

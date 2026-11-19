@@ -27,7 +27,12 @@ export const motion = uniform(1);
 export const CUT = 1.2;
 export const cutHeight = uniform(CUT);
 
-const ACCENT = '#1428a0';
+/** Light blue: the night edition's accent. */
+const ACCENT = '#6fd0ff';
+const COBALT = '#2f6bff';
+
+/** A slow glow, from the shader's clock; still with reduced motion. */
+const glow = () => float(0.55).add(oscSine(time.mul(0.5)).mul(0.45).mul(motion));
 
 /**
  * The rendered object's `userData.y0`, read per object. @types/three types the
@@ -47,8 +52,10 @@ function cutPosition() {
   return vec3(positionLocal.x, metres.sub(y0).div(h).sub(0.5), positionLocal.z);
 }
 
-function wallMaterial(base: string, shade: string) {
+function wallMaterial(base: string, shade: string, emissive?: string) {
   const m = new THREE.MeshStandardNodeMaterial({ roughness: 0.85, metalness: 0 });
+  // A selected wall glows, pulsing slowly.
+  if (emissive) m.emissiveNode = color(emissive).mul(glow()).mul(0.6);
   // Darker in the bottom quarter of the full-height pieces, a cheap contact shade.
   const y0 = objectY0();
   const h = smoothstep(float(-0.5), float(-0.25), positionLocal.y).max(y0.greaterThan(0.01).select(float(1), float(0)));
@@ -64,10 +71,11 @@ function partMaterial(c: string, opts: { roughness?: number; metalness?: number;
   return m;
 }
 
+/** Room colours: vivid against the night floor. */
 const USE: Record<RoomType, string> = {
-  living: '#f0b45a', kitchen: '#e98a5c', dining: '#d9a35f', bedroom: '#8fa4ef',
-  bathroom: '#6cc3cf', office: '#9dc26f', hallway: '#c9cbd6', laundry: '#86b9d9',
-  storage: '#b5a58f', studio: '#c08ad8',
+  living: '#ffb547', kitchen: '#ff7a59', dining: '#ffd166', bedroom: '#8c7bff',
+  bathroom: '#38e1ff', office: '#5cf2a0', hallway: '#7f95bd', laundry: '#4fb8ff',
+  storage: '#c9a77a', studio: '#ff6bd6',
 };
 
 const zones = new Map<string, THREE.MeshBasicNodeMaterial>();
@@ -77,11 +85,11 @@ function zoneMaterial(use: RoomType, selected: boolean) {
   if (!m) {
     m = new THREE.MeshBasicNodeMaterial({ transparent: true, depthWrite: false, side: THREE.DoubleSide, toneMapped: false });
     if (selected) {
-      m.colorNode = mix(color(USE[use]), color(ACCENT), float(0.55));
-      m.opacityNode = float(0.82).add(oscSine(time.mul(0.6)).sub(0.5).mul(0.24).mul(motion));
+      m.colorNode = mix(color(USE[use]), color(ACCENT), float(0.45));
+      m.opacityNode = float(0.85).add(oscSine(time.mul(0.6)).sub(0.5).mul(0.24).mul(motion));
     } else {
       m.colorNode = color(USE[use]);
-      m.opacityNode = float(0.62);
+      m.opacityNode = float(0.5);
     }
     zones.set(key, m);
   }
@@ -123,14 +131,14 @@ function handleMaterial(c: string) {
 }
 
 export const materials = {
-  wall: wallMaterial('#f6f4ef', '#b9bccb'),
-  wallSelected: wallMaterial('#5b6fe0', ACCENT),
-  slab: slabMaterial('#dcdfea'),
-  slabSelected: slabMaterial('#b8c2f2'),
+  wall: wallMaterial('#e9eef8', '#4c5d80'),
+  wallSelected: wallMaterial('#9fe3ff', COBALT, ACCENT),
+  slab: slabMaterial('#161d2c'),
+  slabSelected: slabMaterial('#1f3a6e'),
   zone: zoneMaterial,
   handle: handleMaterial('#ffffff'),
   handleRing: handleMaterial(ACCENT),
-  insert: handleMaterial('#93a3ff'),
+  insert: handleMaterial('#c6f0ff'),
   preview: (() => {
     const m = new THREE.MeshBasicNodeMaterial({ color: ACCENT, transparent: true, opacity: 0.55 });
     m.positionNode = cutPosition();
@@ -138,9 +146,9 @@ export const materials = {
   })(),
   finish: finishMaterial,
   glass: partMaterial('#9cc7e8', { glass: true }),
-  partSelected: partMaterial(ACCENT, { roughness: 0.5 }),
+  partSelected: (() => { const m = partMaterial(ACCENT, { roughness: 0.5 }); m.emissiveNode = color(ACCENT).mul(glow()).mul(0.5); return m; })(),
   glassSelected: partMaterial('#5b6fe0', { glass: true }),
-  ground: new THREE.MeshStandardNodeMaterial({ color: '#dfe3f1', roughness: 1 }),
+  ground: new THREE.MeshStandardNodeMaterial({ color: '#070b14', roughness: 1 }),
 };
 
 export const USE_COLOURS = USE;

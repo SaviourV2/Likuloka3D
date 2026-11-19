@@ -52,7 +52,50 @@ export function SceneRoot() {
 function Building({ id }: { id: Id }) {
   const ref = useEntity<THREE.Group>(id, 'building');
   const levels = useEditor(children(id));
-  return <group ref={ref}>{levels.map(l => <Level key={l} id={l} />)}</group>;
+  return <group ref={ref}>{levels.map(l => <Level key={l} id={l} />)}<MoveRing building={id} /></group>;
+}
+
+const RING = new THREE.TorusGeometry(0.55, 0.07, 12, 48);
+const DOT = new THREE.CircleGeometry(0.22, 32);
+
+/**
+ * The handle that moves a whole building: a ring on the ground at the middle
+ * of its lowest floor. It shows when the building, one of its levels or a
+ * floor slab is selected.
+ */
+function MoveRing({ building }: { building: Id }) {
+  const show = useEditor(s => {
+    if (s.tool !== 'select' || s.role.kind === 'client' || !s.selection) return false;
+    let n = s.doc.nodes[s.selection];
+    if (n?.type === 'slab') n = s.doc.nodes[n.parent];
+    if (n?.type === 'level') n = s.doc.nodes[n.parent];
+    return n?.id === building;
+  });
+  // Middle of the lowest floor's walls, as text so the ring re-renders only when it moves.
+  const at = useEditor(s => {
+    const b = s.doc.nodes[building];
+    if (b?.type !== 'building') return '';
+    const lowest = b.children.map(c => s.doc.nodes[c]).filter(l => l?.type === 'level').sort((p, q) => (p as { elevation: number }).elevation - (q as { elevation: number }).elevation)[0];
+    if (lowest?.type !== 'level') return '';
+    const pts = lowest.children.map(c => s.doc.nodes[c]).flatMap(n => (n?.type === 'wall' ? [n.a, n.b] : n?.type === 'slab' ? n.points : []));
+    if (!pts.length) return '0,0';
+    const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
+    return `${(Math.min(...xs) + Math.max(...xs)) / 2},${(Math.min(...ys) + Math.max(...ys)) / 2}`;
+  });
+  if (!show || !at) return null;
+  const [x, z] = at.split(',').map(Number);
+  return (
+    <group position={[x, 0.08, z]} rotation={[-Math.PI / 2, 0, 0]}>
+      <mesh geometry={RING} material={materials.handleRing} renderOrder={10} userData={{ handle: true }}
+        onPointerDown={e => startDrag(e, building, 'building', 'Move building', edits.building(building))}
+        onPointerOver={e => { if (shown(e.object)) { e.stopPropagation(); cursor('move'); } }}
+        onPointerOut={() => cursor('')} />
+      <mesh geometry={DOT} material={materials.insert} renderOrder={10} userData={{ handle: true }}
+        onPointerDown={e => startDrag(e, building, 'building', 'Move building', edits.building(building))}
+        onPointerOver={e => { if (shown(e.object)) { e.stopPropagation(); cursor('move'); } }}
+        onPointerOut={() => cursor('')} />
+    </group>
+  );
 }
 
 function Level({ id }: { id: Id }) {

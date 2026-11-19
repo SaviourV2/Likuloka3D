@@ -28,6 +28,7 @@ npm run build
 
 - **Hierarchy.** Each building has levels; each level has a slab, zones (rooms) and walls; each wall has its doors and windows. The scene list on the left shows the tree, and clicking a row selects that node.
 - **Stack, explode, solo.** Each building has its own switch. Stack draws levels at their elevations. Explode pulls them 2.75 m apart so every floor can be seen and edited. Solo shows one level; pick which with its Show button.
+- **Move buildings.** Select a building, one of its levels or a floor slab, and a light-blue ring appears on the ground in the middle of the building. Drag the ring to move the whole building, on the grid. It is one undo step, and nothing inside the building changes. Clients cannot move buildings.
 - **Drag walls.** Drag a wall to slide it sideways. Walls joined to its ends stretch to follow. Select a wall to get a ball on each end; drag a ball to move that end.
 - **Reshape slabs and zones.** Select one to get a ball on each corner and a small ball on each edge. Drag a corner to move it. Drag a small ball to add a corner there. Drag a selected zone to move it.
 - **Doors and windows.** Press D or choose "Door", or N or "Window", then click a wall: the opening is centred on the click and kept inside the wall. Drag a door or window to slide it along its wall. The inspector sets its width, height, sill and place along the wall, and can turn a door into a window. An opening that does not fit, overlaps another or is taller than its wall is refused with a message. When a wall end moves, the doors and windows in the walls that stretch keep their place in the room. Deleting a wall deletes its openings.
@@ -120,6 +121,17 @@ npm run deploy:functions
 Without the function deployed, designers save as before, and a client's save explains that the function is needed. If your project uses a region other than `us-central1`, set `functionsRegion` in `cloud.json`.
 
 Data: `projects/{id}` holds `name`, `ownerUid`, `members` (uid to role), `memberUids`, `memberNames`, `scene` (the scene as JSON), `sceneVersion`, `updatedAt` and `updatedBy`; `projects/{id}/versions/{id}` holds `number`, `createdAt`, `author`, `authorUid`, `note`, `scene` and `approval`; `invites/{token}` holds `projectId`, `role`, `createdBy`, `createdAt` and `projectName`.
+
+## Design
+
+The night edition: black, with the cobalt of likuloka.com carried into light blue (`--accent` `#6fd0ff`, `--accent-2` `#2f6bff`), Archivo for text and JetBrains Mono for figures. The page background is black with slowly drifting cobalt and light-blue glows and a faint blueprint grid; the panels are translucent over it. In the 3D view, a gradient night sky is drawn by the GPU, with fog into the distance, a glowing grid, a light-blue rim light and vivid room colours on dark floors. The selection glows with a slow light-blue pulse computed in the shader.
+
+Motion:
+
+- Orbit, pan and zoom glide to a stop, and the wheel zooms toward the pointer.
+- While something is dragged, the view's frame glows and the cursor grabs.
+- In the scene list, inspector, dialogs and lists, rows rise into place as they scroll into view (scroll-driven animations, where the browser has them); a new selection slides its inspector in; the menu's items cascade open.
+- With "reduce motion" on, there is no inertia, no pulse and no animation; changes apply at once.
 
 ## How it is built
 

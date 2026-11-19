@@ -9,7 +9,7 @@ import * as THREE from 'three/webgpu';
 import type { ThreeEvent } from '@react-three/fiber';
 import type { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { world } from '@/ecs/world';
-import { ancestor, addOpeningAt, addWall, insertPoint, movePoint, moveWallEnd, offsetWall, slideOpening, snapPoint, translate } from '@/scene/ops';
+import { ancestor, addOpeningAt, addWall, insertPoint, movePoint, moveWallEnd, offsetWall, setOrigin, slideOpening, snapPoint, translate } from '@/scene/ops';
 import { begin, cancel, commit, editor, end, preview, select, setInteraction, setTool, type Interaction } from '@/scene/store';
 import type { Id, SceneDoc, Vec2 } from '@/scene/types';
 
@@ -49,7 +49,11 @@ export function startDrag(e: ThreeEvent<PointerEvent>, target: Id, what: Extract
   const s = editor.getState();
   // Clients do not move things: a press only selects, through the click handlers.
   if (e.button !== 0 || s.tool !== 'select' || !shown(e.object) || s.role.kind === 'client') return;
-  const level = ancestor(s.doc, target, 'level');
+  // A building is dragged on its lowest floor's plane.
+  const node = s.doc.nodes[target];
+  const level = node?.type === 'building'
+    ? node.children.map(c => s.doc.nodes[c]).filter(l => l?.type === 'level').sort((p, q) => (p as { elevation: number }).elevation - (q as { elevation: number }).elevation)[0] as { id: Id } | undefined
+    : ancestor(s.doc, target, 'level');
   if (!level) return;
   e.stopPropagation();
   const from = planAt(s.doc, level.id, e.clientX, e.clientY);
@@ -117,6 +121,11 @@ export const edits = {
     return insertPoint(base, id, index, plus([(p[0] + q[0]) / 2, (p[1] + q[1]) / 2], from, to));
   },
   translate: (id: Id): Edit => (base, from, to) => translate(base, id, [to[0] - from[0], to[1] - from[1]]),
+  /** A whole building moves with the pointer, snapped to the grid. */
+  building: (id: Id): Edit => (base, from, to) => {
+    const b = base.nodes[id];
+    return b?.type === 'building' ? setOrigin(base, id, [b.origin[0] + to[0] - from[0], b.origin[1] + to[1] - from[1]]) : base;
+  },
   /** A door or window slides along its wall by the pointer's travel along the wall. */
   opening: (id: Id): Edit => (base, from, to) => {
     const o = base.nodes[id];

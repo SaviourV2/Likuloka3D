@@ -48,7 +48,8 @@ Roomlines, a floor plan editor with a 3D view. `README.md` documents the plan fo
 - A new field on a node needs a default in `migrate` in `ops.ts`, so projects saved earlier still open.
 - Never read browser storage while rendering: the page is pre-rendered as static HTML, and a difference breaks hydration. Read it in effects or in components that render only once a dialog is open.
 - A `useFrame` callback must use a priority of 0 or below: a positive priority takes rendering over from React Three Fiber and the view goes blank.
-- The look follows likuloka.com, as above: cobalt `--accent`, Archivo, JetBrains Mono for figures, and `--crit` for errors and destructive actions.
+- The look is the night edition of likuloka.com: one dark theme, black with light-blue `--accent` and cobalt `--accent-2`, Archivo, JetBrains Mono for figures, `--crit` for errors and destructive actions, `--warn` for warnings. Printed and exported drawings stay black on white.
+- Motion must stop with reduced motion: camera inertia, the selection pulse (the `motion` uniform) and every CSS animation.
 - All lengths are metres. Wall positions are on a 0.25 m grid; door and window sizes are kept to 5 mm (frames are ordered in millimetres) and wall layers to 0.1 mm. Plan `x` is world `x`, plan `y` is world `z`.
 - An opening's width and height are the structural opening. Frame sizes come from `frameSize` with the project's fitting gap; catalogue products are given by frame size.
 - Products, wall types, check limits and the schedule's columns live in `public/catalogue.json`, read at runtime. Do not hard-code products. The example products are not real ones; never add a manufacturer's real product data to this public repository.

@@ -11,6 +11,7 @@ import { useEffect, useLayoutEffect } from 'react';
 import { Canvas, events, extend, useFrame, useThree, type ThreeToJSXElements } from '@react-three/fiber';
 import * as THREE from 'three/webgpu';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { color, float, mix, screenUV, smoothstep } from 'three/tsl';
 import { world } from '@/ecs/world';
 import { CUT, cutHeight, materials, motion } from '@/ecs/materials';
 import { diff } from '@/scene/ops';
@@ -51,8 +52,11 @@ function Systems() {
     world.step(s.doc, s.views, s.selection, s.cut, Math.min(dt, 0.1));
     let animating = false;
     for (const l of world.levels.values()) if (l.y !== l.target) { animating = true; break; }
-    const pulsing = !world.reducedMotion && !!s.selection && s.doc.nodes[s.selection]?.type === 'zone';
-    if (animating || pulsing) invalidate();
+    // A selection glows from the shader's clock, so it needs frames while selected.
+    const pulsing = !world.reducedMotion && !!s.selection;
+    // Orbit and zoom ease to a stop: keep drawing while they do.
+    const easing = !!rig.controls?.enableDamping && rig.controls.update(Math.min(dt, 0.1));
+    if (animating || pulsing || easing) invalidate();
   }, -1);
   return null;
 }
@@ -63,7 +67,12 @@ function Rig() {
   useLayoutEffect(() => {
     const dom = gl.domElement as HTMLElement;
     const controls = new OrbitControls(camera, dom);
-    controls.enableDamping = false;
+    // Orbit, pan and zoom glide to a stop, and zoom heads for the pointer; without inertia for reduced motion.
+    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    controls.enableDamping = !reduced;
+    controls.dampingFactor = 0.075;
+    controls.zoomToCursor = true;
+    controls.zoomSpeed = 0.9;
     controls.maxPolarAngle = Math.PI * 0.495;
     controls.minDistance = 2;
     controls.maxDistance = 200;
@@ -74,7 +83,14 @@ function Rig() {
     rig.invalidate = invalidate;
     frame(editor.getState().doc);
     const detach = attachWallTool(dom);
-    return () => { detach(); controls.dispose(); rig.controls = null; };
+    // The view says when something is being dragged (styles glow the frame).
+    const holder = dom.closest('.viewport') as HTMLElement | null;
+    const unsub = editor.subscribe(s => {
+      const dragging = s.interaction.kind === 'dragging';
+      if (holder && holder.dataset.dragging !== String(dragging)) holder.dataset.dragging = String(dragging);
+      if (dragging) dom.style.cursor = 'grabbing';
+    });
+    return () => { detach(); unsub(); controls.dispose(); rig.controls = null; };
   }, [camera, gl, invalidate]);
 
   useEffect(() => {
@@ -132,9 +148,21 @@ function Ground() {
         onClick={e => { if (e.delta < 4 && editor.getState().tool === 'select') select(null); }}>
         <planeGeometry args={[400, 400]} />
       </mesh>
-      <gridHelper args={[120, 120, '#b5bbd6', '#cdd2e6']} position={[0, -0.265, 0]} />
+      <gridHelper args={[160, 160, '#2f6bff', '#12223d']} position={[0, -0.265, 0]} />
+      <gridHelper args={[160, 32, '#2f6bff', '#1c3a6b']} position={[0, -0.262, 0]} />
     </>
   );
+}
+
+/** A night sky: a gradient from deep cobalt to black, drawn by the GPU, and fog into the distance. */
+function Sky() {
+  const scene = useThree(s => s.scene) as unknown as THREE.Scene;
+  useLayoutEffect(() => {
+    scene.backgroundNode = mix(color('#0c1a3a'), color('#020309'), smoothstep(float(0), float(0.85), screenUV.y));
+    scene.fog = new THREE.Fog('#03050b', 55, 170);
+    return () => { scene.backgroundNode = null; scene.fog = null; };
+  }, [scene]);
+  return null;
 }
 
 export default function Viewport() {
@@ -157,8 +185,9 @@ export default function Viewport() {
         filter: items => [...items].sort((p, q) => Number(!!q.object.userData.handle) - Number(!!p.object.userData.handle) || p.distance - q.distance),
       })}
     >
-      <color attach="background" args={['#eef0f8']} />
-      <hemisphereLight args={['#ffffff', '#c9cee3', 1.4]} />
+      <Sky />
+      <hemisphereLight args={['#cfe9ff', '#05070d', 1.35]} />
+      <directionalLight position={[-18, 12, -16]} intensity={1.1} color="#6fd0ff" />
       <directionalLight position={[14, 22, 10]} intensity={2.2} castShadow
         shadow-mapSize={[2048, 2048]} shadow-camera-left={-30} shadow-camera-right={30}
         shadow-camera-top={30} shadow-camera-bottom={-30} shadow-bias={-0.0005} />

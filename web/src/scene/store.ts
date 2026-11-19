@@ -22,7 +22,7 @@ export interface Step { doc: SceneDoc; label: string }
 /** What the pointer is doing. One value instead of a flag per mode. */
 export type Interaction =
   | { kind: 'idle' }
-  | { kind: 'dragging'; target: Id; what: 'wall' | 'wall-end' | 'point' | 'insert' | 'zone' | 'opening' }
+  | { kind: 'dragging'; target: Id; what: 'wall' | 'wall-end' | 'point' | 'insert' | 'zone' | 'opening' | 'building' }
   | { kind: 'drawing-wall'; level: Id; from: Vec2 | null; to: Vec2 | null }
   /** A click on a wall puts a door or window there. */
   | { kind: 'placing'; what: OpeningKind };
