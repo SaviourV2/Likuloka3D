@@ -326,3 +326,4 @@ button.link { border: 0; background: none; color: var(--accent); font-weight: 60
 .people .danger { padding: 4px 9px; }
 .notice { color: var(--accent); font-weight: 600; }
 .notice button { font: 600 11px var(--font-data); padding: 2px 8px; margin-left: 6px; }
+.sheet-actions { display: flex; gap: 6px; }

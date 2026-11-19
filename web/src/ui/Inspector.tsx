@@ -1,7 +1,7 @@
 'use client';
 /** Properties of the selected node. Each field commits one undo step when it changes. */
 import { useEffect, useState } from 'react';
-import { addZone, area, rename, setOrigin, updateLevel, updateOpening, updateSlab, updateWall, updateZone } from '@/scene/ops';
+import { addZone, area, rename, setWallLength, updateLevel, updateOpening, updateSlab, updateWall, updateZone } from '@/scene/ops';
 import { commit, isClient, removeSelected, useEditor } from '@/scene/store';
 import { FINISH_LABELS, frameSize, OPENING_FINISHES, ROOM_TYPES, type OpeningFinish, type OpeningNode, type RoomType, type SceneDoc, type SceneNode, type Vec2, type WallNode } from '@/scene/types';
 import { applyProduct, applyWallType, formatPrice, productFor, wallTypeFor } from '@/scene/catalogue';
@@ -25,21 +25,27 @@ function Choice<T extends string>({ label, value, options, onPick }: { label: st
 const mm = (m: number) => Math.round(m * 1000).toLocaleString('en-GB');
 import { rig } from '@/render/interact';
 
-function Num({ label, value, step = 0.25, onCommit, min }: { label: string; value: number; step?: number; min?: number; onCommit: (v: number) => void }) {
-  const [text, setText] = useState(String(value));
-  useEffect(() => setText(String(value)), [value]);
+/**
+ * A length, typed and shown in whole millimetres, as builders work. The model
+ * is in metres; this converts both ways.
+ */
+function Mm({ label, value, step = 10, onCommit, hint }: { label: string; value: number; step?: number; hint?: string; onCommit: (metres: number) => void }) {
+  const shown = String(Math.round(value * 1000));
+  const [text, setText] = useState(shown);
+  useEffect(() => setText(shown), [shown]);
   const done = () => {
-    const v = Number(text);
-    if (text.trim() === '' || !Number.isFinite(v)) { setText(String(value)); return; }
-    if (v !== value) onCommit(v);
+    const v = Number(text.replace(/[\s,]/g, ''));
+    if (text.trim() === '' || !Number.isFinite(v)) { setText(shown); return; }
+    if (String(Math.round(v)) !== shown) onCommit(Math.round(v) / 1000);
+    else setText(shown);
   };
   return (
-    <label className="field">
+    <label className="field" title={hint}>
       <span>{label}</span>
-      <input inputMode="decimal" type="number" step={step} min={min} value={text}
+      <input inputMode="numeric" type="number" step={step} value={text} aria-label={label}
         onChange={e => setText(e.target.value)} onBlur={done}
         onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} />
-      <em>m</em>
+      <em>mm</em>
     </label>
   );
 }
@@ -59,6 +65,14 @@ function Text({ label, value, onCommit }: { label: string; value: string; onComm
 
 const fmt = (n: number) => n.toFixed(2);
 const len = (a: Vec2, b: Vec2) => Math.hypot(b[0] - a[0], b[1] - a[1]);
+
+/** A room's width and depth when it is a rectangle; null for other shapes. */
+function rectangle(points: readonly Vec2[]): [number, number] | null {
+  if (points.length !== 4) return null;
+  const xs = [...new Set(points.map(p => p[0]))], ys = [...new Set(points.map(p => p[1]))];
+  if (xs.length !== 2 || ys.length !== 2) return null;
+  return [Math.abs(xs[1] - xs[0]), Math.abs(ys[1] - ys[0])];
+}
 const edit = (fn: (d: SceneDoc) => SceneDoc, label: string) => { commit(fn, label); rig.invalidate(); };
 
 export default function Inspector() {
@@ -98,28 +112,23 @@ function Selected({ node, error }: { node: SceneNode; error: string | null }) {
       <Text label="Name" value={node.name} onCommit={v => edit(d => rename(d, id, v), 'Rename')} />
       {node.type === 'building' && (
         <div className="fields">
-          <Num label="Origin x" value={node.origin[0]} onCommit={v => edit(d => setOrigin(d, id, [v, node.origin[1]]), 'Move building')} />
-          <Num label="Origin y" value={node.origin[1]} onCommit={v => edit(d => setOrigin(d, id, [node.origin[0], v]), 'Move building')} />
           <p className="figure">{node.children.length} level{node.children.length === 1 ? '' : 's'}</p>
         </div>
       )}
       {node.type === 'level' && (
         <div className="fields">
-          <Num label="Elevation" value={node.elevation} step={0.05} onCommit={v => edit(d => updateLevel(d, id, { elevation: v }), 'Change elevation')} />
-          <Num label="Height" value={node.height} step={0.05} onCommit={v => edit(d => updateLevel(d, id, { height: v }), 'Change level height')} />
+          <Mm label="Floor height" hint="Height of this floor above the ground" value={node.elevation} step={50} onCommit={v => edit(d => updateLevel(d, id, { elevation: v }), 'Change floor height')} />
+          <Mm label="Storey height" hint="From this floor to the next" value={node.height} step={50} onCommit={v => edit(d => updateLevel(d, id, { height: v }), 'Change storey height')} />
           <button type="button" className="add" onClick={() => edit(d => addZone(d, id, { name: 'New zone', points: [[0, 0], [3, 0], [3, 3], [0, 3]] })[0], 'Add zone')}>+ Zone</button>
         </div>
       )}
       {node.type === 'wall' && (
         <div className="fields">
-          <p className="figure">Length <b>{fmt(len(node.a, node.b))} m</b></p>
-          <Num label="Start x" value={node.a[0]} onCommit={v => edit(d => updateWall(d, id, { a: [v, node.a[1]] }), 'Move wall end')} />
-          <Num label="Start y" value={node.a[1]} onCommit={v => edit(d => updateWall(d, id, { a: [node.a[0], v] }), 'Move wall end')} />
-          <Num label="End x" value={node.b[0]} onCommit={v => edit(d => updateWall(d, id, { b: [v, node.b[1]] }), 'Move wall end')} />
-          <Num label="End y" value={node.b[1]} onCommit={v => edit(d => updateWall(d, id, { b: [node.b[0], v] }), 'Move wall end')} />
+          <Mm label="Length" hint="Lengths snap to the 250 mm grid; walls joined at the far end follow" value={len(node.a, node.b)} step={250} onCommit={v => edit(d => setWallLength(d, id, v), 'Change wall length')} />
           <BuildUp wall={node} />
-          <Num label="Thickness" value={node.thickness} step={0.005} onCommit={v => edit(d => updateWall(d, id, { thickness: v }), 'Change wall thickness')} />
-          <Num label="Height" value={node.height} step={0.05} onCommit={v => edit(d => updateWall(d, id, { height: v }), 'Change wall height')} />
+          <Mm label="Thickness" value={node.thickness} step={5} onCommit={v => edit(d => updateWall(d, id, { thickness: v }), 'Change wall thickness')} />
+          <Mm label="Height" value={node.height} step={50} onCommit={v => edit(d => updateWall(d, id, { height: v }), 'Change wall height')} />
+          <p className="figure">Drag the wall in the view to move it; drag a ball to move an end.</p>
         </div>
       )}
       {node.type === 'zone' && (
@@ -131,7 +140,7 @@ function Selected({ node, error }: { node: SceneNode; error: string | null }) {
             </select>
             <i className="swatch" style={{ background: USE_COLOURS[node.use] }} aria-hidden="true" />
           </label>
-          <p className="figure">Area <b>{fmt(Math.abs(area(node.points)))} m²</b> · {node.points.length} corners</p>
+          <RoomSize points={node.points} />
         </div>
       )}
       {node.type === 'opening' && (
@@ -153,10 +162,10 @@ function Selected({ node, error }: { node: SceneNode; error: string | null }) {
           <Choice label="Drawn" value={node.state} options={[['closed', 'Closed'], ['open', 'Open']]}
             onPick={v => edit(d => updateOpening(d, id, { state: v }), v === 'open' ? `Open the ${node.kind}` : `Close the ${node.kind}`)} />
           <fieldset className="plain" disabled={client}>
-          <Num label="Width" value={node.width} step={0.005} onCommit={v => edit(d => updateOpening(d, id, { width: v }), 'Change opening width')} />
-          <Num label="Height" value={node.height} step={0.005} onCommit={v => edit(d => updateOpening(d, id, { height: v }), 'Change opening height')} />
-          <Num label="Sill" value={node.sill} step={0.05} onCommit={v => edit(d => updateOpening(d, id, { sill: v }), 'Change sill height')} />
-          <Num label="Along wall" value={node.offset} step={0.125} onCommit={v => edit(d => updateOpening(d, id, { offset: v }), 'Move opening')} />
+          <Mm label="Width" value={node.width} step={5} onCommit={v => edit(d => updateOpening(d, id, { width: v }), 'Change opening width')} />
+          <Mm label="Height" value={node.height} step={5} onCommit={v => edit(d => updateOpening(d, id, { height: v }), 'Change opening height')} />
+          {node.kind === 'window' && <Mm label="Sill height" hint="From the floor to the bottom of the opening" value={node.sill} step={50} onCommit={v => edit(d => updateOpening(d, id, { sill: v }), 'Change sill height')} />}
+          <Placement opening={node} />
           </fieldset>
           <dl className="measures" aria-label="Measurements">
             <dt>Opening</dt><dd data-measure="size">{mm(node.width)} × {mm(node.height)} mm</dd>
@@ -171,8 +180,8 @@ function Selected({ node, error }: { node: SceneNode; error: string | null }) {
       )}
       {node.type === 'slab' && (
         <div className="fields">
-          <Num label="Thickness" value={node.thickness} step={0.05} onCommit={v => edit(d => updateSlab(d, id, { thickness: v }), 'Change slab thickness')} />
-          <p className="figure">Area <b>{fmt(Math.abs(area(node.points)))} m²</b> · {node.points.length} corners</p>
+          <Mm label="Thickness" value={node.thickness} step={25} onCommit={v => edit(d => updateSlab(d, id, { thickness: v }), 'Change slab thickness')} />
+          <RoomSize points={node.points} />
         </div>
       )}
       </fieldset>
@@ -263,5 +272,34 @@ function Issues({ id }: { id: string }) {
     <ul className="issues compact" aria-label="Checks">
       {mine.map(i => <li key={i.key} data-severity={i.severity} data-rule={i.rule}><span className="sev">{i.severity === 'warning' ? 'Warning' : 'Note'}</span><span>{i.message}</span></li>)}
     </ul>
+  );
+}
+
+/** A room's or slab's size: width by depth when it is a rectangle, and its area. */
+function RoomSize({ points }: { points: readonly Vec2[] }) {
+  const r = rectangle(points);
+  return (
+    <dl className="measures" aria-label="Measurements">
+      {r && <><dt>Size</dt><dd data-measure="room">{mm(r[0])} × {mm(r[1])} mm</dd></>}
+      <dt>Area</dt><dd data-measure="area">{fmt(Math.abs(area(points)))} m²</dd>
+      {!r && <><dt>Corners</dt><dd>{points.length}</dd></>}
+    </dl>
+  );
+}
+
+/**
+ * Where an opening sits, as a builder sets it out: the distance from the
+ * wall's start to the opening's near edge, and what is left to the far end.
+ */
+function Placement({ opening }: { opening: OpeningNode }) {
+  const wallLength = useEditor(s => { const w = s.doc.nodes[opening.parent]; return w?.type === 'wall' ? len(w.a, w.b) : 0; });
+  const fromStart = opening.offset - opening.width / 2;
+  const toEnd = wallLength - opening.offset - opening.width / 2;
+  return (
+    <>
+      <Mm label="From wall start" hint="From the start of the wall to the near edge of the opening" value={fromStart} step={25}
+        onCommit={v => edit(d => updateOpening(d, opening.id, { offset: v + opening.width / 2 }), 'Move opening')} />
+      <p className="figure">To the wall end <b data-measure="to-end">{mm(toEnd)} mm</b></p>
+    </>
   );
 }

@@ -413,9 +413,32 @@ async function drag(page, level, grab, by, lift = 0) {
 
     // ---- inspector, delete and the cut -------------------------------------------------------
     await page.evaluate(i => likuloka.select(i), id.partition);
-    await page.locator('.inspector .field', { hasText: 'Thickness' }).locator('input').fill('0.4');
+    await page.locator('.inspector .field', { hasText: 'Thickness' }).locator('input').fill('400');
     await page.locator('.inspector .field', { hasText: 'Thickness' }).locator('input').press('Enter');
     ok('the inspector edits the wall', (await node(page, id.partition)).thickness === 0.4);
+    ok('the inspector gives a wall its length, thickness and height in millimetres, with no coordinates',
+      (await page.locator('.inspector input[aria-label="Length"]').inputValue()) === '3500'
+      && (await page.locator('.inspector input[aria-label="Thickness"]').inputValue()) === '400'
+      && (await page.locator('.inspector .field', { hasText: /Start x|End y|Origin/ }).count()) === 0);
+    await page.locator('.inspector input[aria-label="Length"]').fill('3000');
+    await page.locator('.inspector input[aria-label="Length"]').press('Enter');
+    const shortened = await node(page, id.partition);
+    ok('typing a length moves the wall’s far end along it', shortened.a[1] === 0 && shortened.b[1] === 3 && shortened.b[0] === 4.5, shortened);
+    await page.evaluate(() => likuloka.undo());
+    await page.evaluate(i => likuloka.select(i), id.studioZone);
+    ok('a room shows its size and area', (await page.locator('.inspector [data-measure="room"]').textContent()) === '4,500 × 3,500 mm'
+      && (await page.locator('.inspector [data-measure="area"]').textContent()) === '15.75 m²');
+    const studioDoor = await page.evaluate(w => likuloka.getDoc().nodes[w].children.map(c => likuloka.getDoc().nodes[c]).find(o => o.kind === 'door'), id.backWall);
+    await page.evaluate(i => likuloka.select(i), studioDoor.id);
+    const fromStart = await page.locator('.inspector input[aria-label="From wall start"]').inputValue();
+    ok('a door is placed by its distance from the wall start, with the gap to the end shown',
+      fromStart === String(Math.round((studioDoor.offset - studioDoor.width / 2) * 1000)) && (await page.locator('.inspector [data-measure="to-end"]').textContent()) === `${Math.round((6 - studioDoor.offset - studioDoor.width / 2) * 1000)} mm`, { fromStart, studioDoor });
+    ok('a door has no sill field', (await page.locator('.inspector input[aria-label="Sill height"]').count()) === 0);
+    await page.locator('.inspector input[aria-label="From wall start"]').fill('3500');
+    await page.locator('.inspector input[aria-label="From wall start"]').press('Enter');
+    ok('typing the distance moves the door', Math.abs((await node(page, studioDoor.id)).offset - (3.5 + studioDoor.width / 2)) < 0.07, await node(page, studioDoor.id));
+    await page.evaluate(() => likuloka.undo());
+    await page.evaluate(i => likuloka.select(i), id.partition);
     await page.keyboard.press('Delete');
     ok('Delete removes the selected node', !(await node(page, id.partition)));
     await page.keyboard.press('Control+z');
@@ -458,7 +481,7 @@ async function drag(page, level, grab, by, lift = 0) {
     ok('the inspector shows the frame size', (await page.locator('.inspector [data-measure="frame"]').textContent()) === '1,980 × 1,180 mm');
     const row = await page.evaluate(i => likuloka.schedule().find(r => r.id === i), sw.id);
     ok('the schedule has the product, its frame and its price', row.product === 'W-ALU-1980x1180' && row.frameWidth === 1980 && row.price === 560, row);
-    await page.locator('.inspector .field', { hasText: 'Width' }).locator('input').fill('2.1');
+    await page.locator('.inspector .field', { hasText: 'Width' }).locator('input').fill('2100');
     await page.locator('.inspector .field', { hasText: 'Width' }).locator('input').press('Enter');
     pw = await node(page, sw.id);
     ok('changing a product’s size makes it a custom size', pw.product === null && Math.abs(pw.width - 2.1) < 1e-9, pw);
@@ -469,7 +492,7 @@ async function drag(page, level, grab, by, lift = 0) {
     let pt = await node(page, id.partition);
     ok('a wall takes a build-up from the catalogue, and its thickness', pt.wallType === 'WT-STUD-100' && pt.layers.length === 3 && Math.abs(pt.thickness - 0.1) < 1e-9, pt);
     ok('the inspector lists the layers', (await page.locator('.inspector .layers li').count()) === 3);
-    await page.locator('.inspector .field', { hasText: 'Thickness' }).locator('input').fill('0.2');
+    await page.locator('.inspector .field', { hasText: 'Thickness' }).locator('input').fill('200');
     await page.locator('.inspector .field', { hasText: 'Thickness' }).locator('input').press('Enter');
     pt = await node(page, id.partition);
     ok('typing a thickness makes the wall plain', pt.wallType === null && pt.layers.length === 0 && pt.thickness === 0.2, pt);
@@ -569,6 +592,28 @@ async function drag(page, level, grab, by, lift = 0) {
     ok('the drawings dialog shows every sheet', (await page.locator('.sheets li').count()) === sheets.length);
     const [svgFile] = await Promise.all([page.waitForEvent('download'), page.locator('[data-action="download-svg"]').first().click()]);
     ok('a sheet downloads as SVG', /\.svg$/.test(svgFile.suggestedFilename()), svgFile.suggestedFilename());
+    await page.locator('dialog[aria-labelledby="drawings-title"]').getByRole('button', { name: 'Close' }).click();
+
+    // DXF for AutoCAD and other CAD programs.
+    const DxfParser = require('dxf-parser');
+    const dxfText = await page.evaluate(() => likuloka.dxf());
+    const dxf = new DxfParser().parseSync(dxfText);
+    const onLayer = l => dxf.entities.filter(e => e.layer === l).length;
+    const dxfLayers = Object.keys(dxf.tables.layer.layers);
+    ok('the DXF opens in a DXF parser, in millimetres', dxf.header.$ACADVER === 'AC1009' && dxf.header.$INSUNITS === 4, dxf.header);
+    ok('the DXF has the plan on named layers', ['A-WALL', 'A-DOOR', 'A-GLAZ', 'A-AREA-IDEN', 'A-ANNO-DIMS', 'A-ANNO-TAGS'].every(l => dxfLayers.includes(l) && onLayer(l) > 0), dxfLayers);
+    ok('the DXF has a swing for every door and a tag for every opening', dxf.entities.filter(e => e.type === 'ARC').length === await page.evaluate(() => Object.values(likuloka.getDoc().nodes).filter(n => n.type === 'opening' && n.kind === 'door').length)
+      && dxf.entities.filter(e => e.type === 'TEXT' && /^[DW]\d\d$/.test(e.text)).length === await page.evaluate(() => Object.values(likuloka.getDoc().nodes).filter(n => n.type === 'opening').length));
+    const studioWidth = dxf.entities.find(e => e.type === 'TEXT' && e.layer === 'A-AREA-IDEN' && e.text === '4500 x 3500');
+    ok('rooms are labelled with their size in millimetres', !!studioWidth);
+    const dxfWalls = dxf.entities.filter(e => e.layer === 'A-WALL' && e.type === 'POLYLINE');
+    const xs = dxfWalls.flatMap(e => e.vertices.map(v => v.x));
+    ok('the DXF is drawn at true size, with closed wall outlines', Math.round(Math.max(...xs) - Math.min(...xs)) > 11000 * 2 && dxfWalls.every(e => e.shape), { span: Math.max(...xs) - Math.min(...xs) });
+    const oneLevel = await page.evaluate(i => likuloka.dxf([i]), id.studioLevel);
+    ok('one level can be exported on its own', new DxfParser().parseSync(oneLevel).entities.filter(e => e.type === 'ARC').length === 1);
+    await menu(page, 'drawings');
+    const [dxfDownload] = await Promise.all([page.waitForEvent('download'), page.locator('[data-action="download-dxf"]').first().click()]);
+    ok('each plan in the drawings downloads as DXF', /\.dxf$/.test(dxfDownload.suggestedFilename()), dxfDownload.suggestedFilename());
     await page.locator('dialog[aria-labelledby="drawings-title"]').getByRole('button', { name: 'Close' }).click();
 
     const ifc = await page.evaluate(() => likuloka.ifc());

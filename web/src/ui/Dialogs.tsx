@@ -8,6 +8,7 @@ import { schedule, scheduleCsv, totals, types } from '@/scene/schedule';
 import { formatPrice } from '@/scene/catalogue';
 import { checks } from '@/scene/checks';
 import { drawingSet, type Sheet } from '@/scene/drawings';
+import { dxfFile } from '@/scene/dxf';
 import * as cloud from '@/scene/cloud';
 import { approvalFrom, compare, rememberedName, rememberName, versionStore, type Comparison, type Version } from '@/scene/versions';
 import * as store from '@/scene/store';
@@ -431,7 +432,7 @@ function DrawingsBody({ dialog }: { dialog: DialogRef }) {
   const close = () => dialog.current?.close();
   return (
     <>
-      <p>A plan of each level and elevations of every wall with doors or windows, to scale on A3. Print them, or choose &ldquo;Save as PDF&rdquo; in the print window. Each sheet also downloads as an SVG for CAD and office software.</p>
+      <p>A plan of each level and elevations of every wall with doors or windows, to scale on A3. Print them, or choose &ldquo;Save as PDF&rdquo; in the print window. Each plan also downloads as DXF, which AutoCAD and other CAD programs open at true size in millimetres (save it as DWG from AutoCAD), and each sheet as SVG.</p>
       <div className="actions start">
         <button type="button" className="primary" data-action="print" onClick={() => printSheets(sheets)}>Print or save as PDF</button>
       </div>
@@ -441,7 +442,13 @@ function DrawingsBody({ dialog }: { dialog: DialogRef }) {
             <div className="sheet-preview" dangerouslySetInnerHTML={{ __html: sh.svg }} />
             <div className="sheet-foot">
               <span>{sh.title}</span>
-              <button type="button" data-action="download-svg" onClick={() => download(`${projects.fileName(doc).replace('.likuloka.json', '')}-${sh.id}.svg`, sh.svg, 'image/svg+xml')}>Download SVG</button>
+              <span className="sheet-actions">
+                {sh.id.startsWith('plan-') && (
+                  <button type="button" data-action="download-dxf" title="For AutoCAD and other CAD programs, at 1:1 in millimetres"
+                    onClick={() => download(`${projects.fileName(doc).replace('.likuloka.json', '')}-${sh.id}.dxf`, dxfFile(doc, { levels: [sh.id.slice(5)], catalogue }), 'application/dxf')}>DXF</button>
+                )}
+                <button type="button" data-action="download-svg" onClick={() => download(`${projects.fileName(doc).replace('.likuloka.json', '')}-${sh.id}.svg`, sh.svg, 'image/svg+xml')}>SVG</button>
+              </span>
             </div>
           </li>
         ))}

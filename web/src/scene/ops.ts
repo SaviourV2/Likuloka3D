@@ -241,6 +241,20 @@ export function moveWallEnd(doc: SceneDoc, id: Id, end: 'a' | 'b', to: Vec2): Sc
 }
 
 /**
+ * Sets a wall's length by moving its end `b` along the wall; walls joined at
+ * that end follow, and its doors and windows keep their place. Ends stay on
+ * the grid, so the length is the nearest one the grid allows.
+ */
+export function setWallLength(doc: SceneDoc, id: Id, length: number): SceneDoc {
+  const wall = get(doc, id, 'wall');
+  const l = finite(length, 'length');
+  if (l < MIN_WALL - 1e-6) throw new SceneError(`A wall must be at least ${MIN_WALL * 1000} mm long`);
+  const len = Math.hypot(wall.b[0] - wall.a[0], wall.b[1] - wall.a[1]);
+  const u: Vec2 = [(wall.b[0] - wall.a[0]) / len, (wall.b[1] - wall.a[1]) / len];
+  return moveWallEnd(doc, id, 'b', [wall.a[0] + u[0] * l, wall.a[1] + u[1] * l]);
+}
+
+/**
  * Slides a wall sideways by `offset` metres along its normal. Its ends move
  * together, carrying the ends of joined walls, which stretch to follow.
  */

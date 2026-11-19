@@ -17,6 +17,7 @@ import { ChecksDialog, CloudDialog, DrawingsDialog, ProjectDialog, ScheduleDialo
 import * as cloud from '@/scene/cloud';
 import { drawingSet } from '@/scene/drawings';
 import { ifcFile } from '@/scene/ifc';
+import { dxfFile } from '@/scene/dxf';
 import { rememberedName } from '@/scene/versions';
 import { checks } from '@/scene/checks';
 import { compare, versionStore } from '@/scene/versions';
@@ -349,6 +350,7 @@ export default function Editor() {
       scheduleCsv: () => scheduleCsv(editor.getState().doc, editor.getState().catalogue),
       catalogue: () => editor.getState().catalogue,
       setCatalogue: store.setCatalogue,
+      dxf: (levels?: string[]) => dxfFile(editor.getState().doc, { levels, catalogue: editor.getState().catalogue }),
       ifc: () => { const s = editor.getState(); return ifcFile(s.doc, { projectId: s.project.id, catalogue: s.catalogue }); },
       drawings: () => drawingSet(editor.getState().doc, editor.getState().catalogue),
       checks: () => checks(editor.getState().doc, editor.getState().catalogue),
@@ -389,7 +391,11 @@ export default function Editor() {
         ['versions', 'Versions and sign-off…', () => { setVersionsOpen(true); versionsDialog.current?.showModal(); }],
         ['schedule', 'Door and window schedule…', () => { setScheduleOpen(true); scheduleDialog.current?.showModal(); }],
         ['drawings', 'Drawings: plans and elevations…', () => { setDrawingsOpen(true); drawingsDialog.current?.showModal(); }],
-        ['ifc', 'Export IFC for BIM', () => {
+        ['dxf', 'Export DXF for AutoCAD (plans)', () => {
+          const s = editor.getState();
+          download(projects.fileName(s.doc).replace('.likuloka.json', '-plans.dxf'), dxfFile(s.doc, { catalogue: s.catalogue }), 'application/dxf');
+        }],
+        ['ifc', 'Export IFC for BIM and SketchUp', () => {
           const s = editor.getState();
           const name = projects.fileName(s.doc).replace('.likuloka.json', '.ifc');
           download(name, ifcFile(s.doc, { projectId: s.project.id, catalogue: s.catalogue, fileName: name, author: rememberedName() }), 'application/x-step');
