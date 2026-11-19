@@ -31,13 +31,19 @@ npm run build
 - **Drag walls.** Drag a wall to slide it sideways. Walls joined to its ends stretch to follow. Select a wall to get a ball on each end; drag a ball to move that end.
 - **Reshape slabs and zones.** Select one to get a ball on each corner and a small ball on each edge. Drag a corner to move it. Drag a small ball to add a corner there. Drag a selected zone to move it.
 - **Doors and windows.** Press D or choose "Door", or N or "Window", then click a wall: the opening is centred on the click and kept inside the wall. Drag a door or window to slide it along its wall. The inspector sets its width, height, sill and place along the wall, and can turn a door into a window. An opening that does not fit, overlaps another or is taller than its wall is refused with a message. When a wall end moves, the doors and windows in the walls that stretch keep their place in the room. Deleting a wall deletes its openings.
+- **Door and window options.** In the inspector: a square or rounded (arched) head, a frame of timber, steel, aluminium or uPVC, and drawn closed or open (the leaf or sash swings out). Rounding a head that is too short for its arch raises it just enough. The finishes are generic colours, not any manufacturer's products.
+- **Measurements.** The inspector gives a door's or window's size, head height, sill height, arch radius and wall depth in millimetres. In the view, the selected door, window or wall shows its size; Measure (M) shows the size of every door and window.
+- **Schedule.** Lists every door and window with a reference (D01, W01…), its sizes in millimetres and where it is, and groups them into types with quantities to order. Click a reference to select that opening. "Download CSV" gives the same list as a spreadsheet file.
+- **Projects.** Name the project in the toolbar. Save (Ctrl+S) keeps it in this browser; the button shows when there are unsaved changes, and undoing back to the saved state counts as saved. The Project dialog lists saved projects to open or delete, starts a new blank project or one from the sample, downloads the project as a `.likuloka.json` file and opens such files, and imports Roomlines plans. The working copy is also kept as a draft, so a reload never loses work.
 - **Draw walls.** Press W or choose "Draw walls", then click on the floor. Each click after the first adds a wall from the last point, so walls chain. Escape ends the run; Escape again goes back to Select.
 - **Cut walls.** On by default. Walls are drawn up to 1.2 m so you can see into the rooms. Turn it off to see full height.
 - **Inspector.** On the right. It edits the selected node's numbers. Every change is one undo step.
 - **Undo and redo.** Ctrl+Z and Ctrl+Shift+Z (or Ctrl+Y), or the toolbar. A whole drag is one step.
 - **Import.** "Import plan" reads a Roomlines plan (see the repository README, "Plan format"), in either the `rooms` or the nested `layout` form. It is added as a new building: each room becomes a zone, the room edges become walls (an edge two rooms share becomes one wall), and the outline of all the rooms becomes the slab.
 
-All lengths are metres on a 0.25 m grid. Plan `x` runs left to right and plan `y` top to bottom; in 3D, plan `y` is world `z`. The scene is saved in the browser's local storage under `likuloka3d.scene`.
+All lengths are metres on a 0.25 m grid. Plan `x` runs left to right and plan `y` top to bottom; in 3D, plan `y` is world `z`.
+
+Projects are stored in the browser's local storage: `likuloka3d.projects` lists them, each is under `likuloka3d.project:<id>`, and the working copy is `likuloka3d.draft`. Scenes saved by earlier versions (including `likuloka3d.scene`) are brought up to date when they are opened.
 
 ## How it is built
 
@@ -66,7 +72,8 @@ Because an edit replaces exactly the nodes it touches, the dirty set is just the
 | System | What it updates |
 |---|---|
 | walls | A wall is a group of boxes: full height between openings, and below and above each door or window. Every box is the same shared unit cube, scaled into place, so moving or cutting a wall uploads matrices and builds no geometry. |
-| openings | A door is a frame and a leaf; a window is a frame, a sill and a pane of glass. They are boxes too. |
+| openings | A door is a frame and a leaf; a window is a frame, a sill and a pane of glass. They are boxes too. An open leaf or sash is a box swung about its hinge. A rounded head uses curved parts (`src/ecs/shapes.ts`) that are normalised to the same unit cube, so they are placed, cut and picked exactly like boxes, and cached by proportion. |
+| labels | Measurements: DOM labels moved in the frame loop after the systems, so React does not re-render for them. |
 | outlines | The slab's or zone's buffers, rebuilt only for the outline that changed. |
 | layout | Each level's height for stack, explode or solo, eased into place. |
 | selection | Swaps the material of the old and the new selection. |
@@ -99,6 +106,11 @@ likuloka.undo(); likuloka.redo()
 likuloka.select(id)
 likuloka.setView(buildingId, { mode: 'explode' })   // 'stack' | 'explode' | 'solo', and `solo: levelId`
 likuloka.importRoomlines(plan)
+likuloka.projects.save(); likuloka.projects.list(); likuloka.projects.open(id)
+likuloka.projects.file()          // the project as file text; projects.openFile(text) opens one
+likuloka.schedule()               // every door and window, sizes in mm; scheduleCsv() as CSV
+likuloka.setMeasure(true)
+likuloka.focus(id)                // points the camera at a node
 likuloka.stats()                  // what each system updated, and the ids changed in the last frame that changed any
 likuloka.project(levelId, x, y)   // the screen position of a plan point
 likuloka.backend()                // 'WebGPU' or 'WebGL 2'
@@ -106,7 +118,7 @@ likuloka.backend()                // 'WebGPU' or 'WebGL 2'
 
 ## Tests
 
-`tests/e2e.cjs` builds nothing itself: it serves `out/` and drives the editor in Chromium with Playwright. It checks the hierarchy, the Roomlines import, dirty tracking (one edit updates one entity), undo and redo, real mouse drags of walls, wall ends, slab corners, edge midpoints, zones and doors, placing doors and windows and their rules, stack, explode and solo, the wall tool, the inspector, import, persistence and the phone layout.
+`tests/e2e.cjs` builds nothing itself: it serves `out/` and drives the editor in Chromium with Playwright. It checks the hierarchy, the Roomlines import, dirty tracking (one edit updates one entity), undo and redo, real mouse drags of walls, wall ends, slab corners, edge midpoints, zones and doors, placing doors and windows and their rules, their shape, frame and open options, measurements, the schedule and its CSV, saving, opening, downloading and deleting projects, opening older scenes, stack, explode and solo, the wall tool, the inspector, import, persistence and the phone layout.
 
 ```bash
 npm test                                         # builds, then tests on WebGPU

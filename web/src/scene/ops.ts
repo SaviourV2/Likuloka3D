@@ -4,9 +4,9 @@
  * is what dirty tracking and undo rely on. Invalid input throws a SceneError.
  */
 import {
-  GRID, MIN_WALL, OPENING_DEFAULTS, OPENING_MARGIN, ROOM_TYPES,
-  type BuildingNode, type Id, type LevelNode, type NodeOf, type NodeType, type OpeningKind, type OpeningNode,
-  type RoomType, type SceneDoc, type SceneNode, type SlabNode, type Vec2, type WallNode, type ZoneNode,
+  GRID, MIN_ARCH_SIDE, MIN_WALL, OPENING_DEFAULTS, OPENING_FINISHES, OPENING_MARGIN, OPENING_SHAPES, ROOM_TYPES, UNTITLED,
+  type BuildingNode, type Id, type LevelNode, type NodeOf, type NodeType, type OpeningFinish, type OpeningKind, type OpeningNode,
+  type OpeningShape, type OpeningState, type RoomType, type SceneDoc, type SceneNode, type SlabNode, type Vec2, type WallNode, type ZoneNode,
 } from './types';
 
 export class SceneError extends Error {
@@ -56,7 +56,13 @@ export function area(points: readonly Vec2[]): number {
   return s / 2;
 }
 
-export const emptyDoc = (): SceneDoc => ({ nodes: {}, roots: [] });
+export const emptyDoc = (name = UNTITLED): SceneDoc => ({ name, nodes: {}, roots: [] });
+
+export function renameProject(doc: SceneDoc, name: string): SceneDoc {
+  const trimmed = name.trim().slice(0, 80);
+  if (!trimmed) throw new SceneError('A project needs a name');
+  return trimmed === doc.name ? doc : { ...doc, name: trimmed };
+}
 
 export function get<T extends NodeType>(doc: SceneDoc, id: Id, type?: T): NodeOf<T> {
   const node = doc.nodes[id];
@@ -78,14 +84,14 @@ export function ancestor<T extends NodeType>(doc: SceneDoc, id: Id, type: T): No
 function put(doc: SceneDoc, ...changed: SceneNode[]): SceneDoc {
   const nodes = { ...doc.nodes };
   for (const n of changed) nodes[n.id] = n;
-  return { nodes, roots: doc.roots };
+  return { ...doc, nodes };
 }
 
 function attach(doc: SceneDoc, node: SceneNode, index?: number): SceneDoc {
   if (node.parent === null) {
     const roots = [...doc.roots];
     roots.splice(index ?? roots.length, 0, node.id);
-    return { nodes: { ...doc.nodes, [node.id]: node }, roots };
+    return { ...doc, nodes: { ...doc.nodes, [node.id]: node }, roots };
   }
   const parent = doc.nodes[node.parent];
   if (!parent || !('children' in parent)) throw new SceneError(`No parent ${node.parent}`);
@@ -230,6 +236,9 @@ function checkFits(wall: WallNode, openings: readonly OpeningNode[]) {
   for (const o of sorted) {
     const what = o.kind === 'door' ? 'door' : 'window';
     if (o.sill + o.height > wall.height + 1e-6) throw new SceneError(`The ${what} is taller than the wall`);
+    if (o.shape === 'arched' && o.height < o.width / 2 + MIN_ARCH_SIDE - 1e-6) {
+      throw new SceneError(`A rounded ${what} must be at least ${(o.width / 2 + MIN_ARCH_SIDE).toFixed(2)} m tall at this width`);
+    }
     if (o.offset - o.width / 2 < OPENING_MARGIN - 1e-6 || o.offset + o.width / 2 > len - OPENING_MARGIN + 1e-6) {
       throw new SceneError(`The ${what} does not fit in the wall`);
     }
@@ -266,7 +275,10 @@ function reanchor(before: SceneDoc, after: SceneDoc, walls: Iterable<Id>): Scene
 
 const snapOffset = (v: number) => Math.round(v / (GRID / 2)) * (GRID / 2);
 
-export interface OpeningInput { kind: OpeningKind; offset: number; width?: number; height?: number; sill?: number; name?: string }
+export interface OpeningInput {
+  kind: OpeningKind; offset: number; width?: number; height?: number; sill?: number; name?: string;
+  shape?: OpeningShape; finish?: OpeningFinish; state?: OpeningState;
+}
 
 function openingFrom(wall: WallNode, input: OpeningInput, id: Id, prev?: OpeningNode): OpeningNode {
   if (input.kind !== 'door' && input.kind !== 'window') throw new SceneError('An opening is a door or a window');
@@ -278,12 +290,18 @@ function openingFrom(wall: WallNode, input: OpeningInput, id: Id, prev?: Opening
   const sillIn = pick(input.sill, kindChanged ? d.sill : (prev?.sill ?? d.sill));
   const sill = Math.round(finite(sillIn, 'sill') * 100) / 100;
   if (sill < 0) throw new SceneError('sill cannot be below the floor');
+  const shape = input.shape ?? prev?.shape ?? 'square';
+  if (!OPENING_SHAPES.includes(shape)) throw new SceneError('The shape is square or arched');
+  const finish = input.finish ?? prev?.finish ?? d.finish;
+  if (!OPENING_FINISHES.includes(finish)) throw new SceneError('The finish is timber, steel, aluminium or uPVC');
+  const state = input.state ?? prev?.state ?? 'closed';
+  if (state !== 'open' && state !== 'closed') throw new SceneError('An opening is open or closed');
   return {
     id, type: 'opening', parent: wall.id, kind: input.kind,
     name: input.name?.trim() || (kindChanged || !prev ? (input.kind === 'door' ? 'Door' : 'Window') : prev.name),
     offset: snapOffset(finite(input.offset, 'offset')),
     width: Math.round(width / GRID) * GRID || GRID,
-    height, sill,
+    height, sill, shape, finish, state,
   };
 }
 
@@ -313,9 +331,19 @@ export function updateOpening(doc: SceneDoc, id: Id, patch: Partial<OpeningInput
   const o = get(doc, id, 'opening');
   const wall = get(doc, o.parent, 'wall');
   // A door turned into a window (or back) takes that kind's height and sill, and keeps its place and width.
-  const base: OpeningInput = patch.kind && patch.kind !== o.kind ? { kind: patch.kind, offset: o.offset, width: o.width } : o;
+  let base: OpeningInput = patch.kind && patch.kind !== o.kind
+    ? { kind: patch.kind, offset: o.offset, width: o.width, shape: o.shape, finish: o.finish, state: o.state }
+    : o;
+  // Rounding a head that is too short for its arch raises it just enough, unless a height is given.
+  const shape = patch.shape ?? base.shape;
+  const width = patch.width ?? base.width ?? o.width;
+  if (shape === 'arched' && patch.height === undefined) {
+    const need = Math.ceil((width / 2 + MIN_ARCH_SIDE) * 20 - 1e-6) / 20;
+    if ((base.height ?? o.height) < need) base = { ...base, height: need };
+  }
   const next = openingFrom(wall, { ...base, ...patch }, id, o);
-  if (next.kind === o.kind && next.offset === o.offset && next.width === o.width && next.height === o.height && next.sill === o.sill && next.name === o.name) return doc;
+  const same = (Object.keys(next) as (keyof OpeningNode)[]).every(k => next[k] === o[k]);
+  if (same) return doc;
   checkFits(wall, openingsOf(doc, wall).map(x => (x.id === id ? next : x)));
   return put(doc, next);
 }
@@ -444,10 +472,10 @@ export function remove(doc: SceneDoc, id: Id): SceneDoc {
     delete nodes[nid];
   };
   drop(id);
-  if (node.parent === null) return { nodes, roots: doc.roots.filter(r => r !== id) };
+  if (node.parent === null) return { ...doc, nodes, roots: doc.roots.filter(r => r !== id) };
   const parent = nodes[node.parent] as BuildingNode | LevelNode | WallNode;
   nodes[parent.id] = { ...parent, children: parent.children.filter(c => c !== id) };
-  return { nodes, roots: doc.roots };
+  return { ...doc, nodes };
 }
 
 // ---- diffing -----------------------------------------------------------------
@@ -463,9 +491,30 @@ export function diff(prev: SceneDoc, next: SceneDoc): Set<Id> {
 }
 
 /** Checks a document read from storage or a file before it is used. */
+/**
+ * Brings a scene saved by an older version up to date: walls before openings
+ * had no `children`, openings before their options had no shape, finish or
+ * state, and scenes before projects had no name. Returns a new object.
+ */
+export function migrate(raw: unknown): unknown {
+  if (!raw || typeof raw !== 'object') return raw;
+  const doc = raw as { name?: unknown; nodes?: Record<string, Record<string, unknown>>; roots?: unknown };
+  if (!doc.nodes || typeof doc.nodes !== 'object') return raw;
+  const nodes: Record<string, Record<string, unknown>> = {};
+  for (const [id, n] of Object.entries(doc.nodes)) {
+    if (n?.type === 'wall' && !n.children) nodes[id] = { ...n, children: [] };
+    else if (n?.type === 'opening') {
+      const kind = n.kind === 'window' ? 'window' : 'door';
+      nodes[id] = { shape: 'square', finish: OPENING_DEFAULTS[kind].finish, state: 'closed', ...n };
+    } else nodes[id] = n;
+  }
+  return { ...doc, name: typeof doc.name === 'string' && doc.name.trim() ? doc.name : UNTITLED, nodes };
+}
+
 export function validate(doc: unknown): SceneDoc {
   if (!doc || typeof doc !== 'object') throw new SceneError('Not a scene');
   const d = doc as SceneDoc;
+  if (typeof d.name !== 'string') throw new SceneError('The project has no name');
   if (!Array.isArray(d.roots) || !d.nodes || typeof d.nodes !== 'object') throw new SceneError('Not a scene');
   const seen = new Set<Id>();
   const walk = (id: Id, parent: Id | null, expect: NodeType[]) => {

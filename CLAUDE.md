@@ -41,6 +41,10 @@ Roomlines, a floor plan editor with a 3D view. `README.md` documents the plan fo
 - Openings are children of walls and measured along them from end `a`. Any operation that moves wall ends must re-anchor the openings in the walls it changes (`reanchor` in `ops.ts`) so they keep their place in the room.
 - Components must not subscribe to node data that a system draws (wall ends, outlines, openings). Systems in `src/ecs/world.ts` update those objects; React only mounts and unmounts them.
 - Pointer modes are values of `interaction` in the store. Add a value for a new mode; do not add a boolean flag. Plain settings, such as `cut`, are plain values.
-- Selection, tools, level modes and `cut` are view state and are not undone.
+- Selection, tools, level modes, `cut` and `measure` are view state and are not undone. The project's name is in the document, so renaming it is undone like any edit.
+- Saved projects live in browser storage (`src/scene/projects.ts`). A project is unsaved when `doc !== project.saved`; anything that loads a document must set `saved` to the document the store holds after loading, since loading migrates.
+- A new field on a node needs a default in `migrate` in `ops.ts`, so projects saved earlier still open.
+- Never read browser storage while rendering: the page is pre-rendered as static HTML, and a difference breaks hydration. Read it in effects or in components that render only once a dialog is open.
+- A `useFrame` callback must use a priority of 0 or below: a positive priority takes rendering over from React Three Fiber and the view goes blank.
 - The look follows likuloka.com, as above: cobalt `--accent`, Archivo, JetBrains Mono for figures, and `--crit` for errors and destructive actions.
 - All lengths are metres on a 0.25 m grid. Plan `x` is world `x`, plan `y` is world `z`.

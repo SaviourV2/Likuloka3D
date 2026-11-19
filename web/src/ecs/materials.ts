@@ -15,7 +15,7 @@
  */
 import * as THREE from 'three/webgpu';
 import { color, float, min, mix, modelScale, oscSine, positionLocal, smoothstep, time, uniform, userData, vec3 } from 'three/tsl';
-import type { RoomType } from '@/scene/types';
+import type { OpeningFinish, RoomType } from '@/scene/types';
 
 /** One unit cube shared by every wall piece and door or window part; each is scaled into place. */
 export const UNIT_BOX = new THREE.BoxGeometry(1, 1, 1);
@@ -57,8 +57,8 @@ function wallMaterial(base: string, shade: string) {
   return m;
 }
 
-function partMaterial(c: string, opts: { roughness?: number; glass?: boolean } = {}) {
-  const m = new THREE.MeshStandardNodeMaterial({ color: c, roughness: opts.roughness ?? 0.6, metalness: 0 });
+function partMaterial(c: string, opts: { roughness?: number; metalness?: number; glass?: boolean } = {}) {
+  const m = new THREE.MeshStandardNodeMaterial({ color: c, roughness: opts.roughness ?? 0.6, metalness: opts.metalness ?? 0 });
   if (opts.glass) { m.transparent = true; m.opacity = 0.38; m.depthWrite = false; m.roughness = 0.05; }
   m.positionNode = cutPosition();
   return m;
@@ -88,6 +88,31 @@ function zoneMaterial(use: RoomType, selected: boolean) {
   return m;
 }
 
+/**
+ * The look of each frame finish, for the frame and for a door leaf. These are
+ * generic material colours, not any manufacturer's product.
+ */
+const FINISH: Record<OpeningFinish, { frame: string; leaf: string; roughness: number; metalness: number }> = {
+  timber: { frame: '#9c6f45', leaf: '#b98a5a', roughness: 0.75, metalness: 0 },
+  steel: { frame: '#3f444c', leaf: '#555b64', roughness: 0.45, metalness: 0.55 },
+  aluminium: { frame: '#bfc4cb', leaf: '#cdd1d7', roughness: 0.35, metalness: 0.7 },
+  upvc: { frame: '#f4f4f0', leaf: '#ecece6', roughness: 0.5, metalness: 0 },
+};
+const finishes = new Map<string, THREE.MeshStandardNodeMaterial>();
+function finishMaterial(finish: OpeningFinish, part: 'frame' | 'leaf') {
+  const key = `${finish}:${part}`;
+  let m = finishes.get(key);
+  if (!m) {
+    const f = FINISH[finish];
+    m = partMaterial(f[part], { roughness: f.roughness, metalness: f.metalness });
+    finishes.set(key, m);
+  }
+  return m;
+}
+export const FINISH_SWATCH: Record<OpeningFinish, string> = {
+  timber: FINISH.timber.leaf, steel: FINISH.steel.frame, aluminium: FINISH.aluminium.frame, upvc: FINISH.upvc.frame,
+};
+
 function slabMaterial(top: string) {
   return new THREE.MeshStandardNodeMaterial({ color: top, roughness: 0.95, metalness: 0 });
 }
@@ -111,8 +136,7 @@ export const materials = {
     m.positionNode = cutPosition();
     return m;
   })(),
-  frame: partMaterial('#fbfaf7', { roughness: 0.5 }),
-  door: partMaterial('#b98a5a', { roughness: 0.7 }),
+  finish: finishMaterial,
   glass: partMaterial('#9cc7e8', { glass: true }),
   partSelected: partMaterial(ACCENT, { roughness: 0.5 }),
   glassSelected: partMaterial('#5b6fe0', { glass: true }),

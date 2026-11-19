@@ -25,6 +25,7 @@ import { ancestor } from '@/scene/ops';
 import type { BuildingView } from '@/scene/store';
 import type { Id, NodeType, OpeningNode, SceneDoc, SlabNode, Vec2, WallNode, ZoneNode } from '@/scene/types';
 import { CUT, materials, UNIT_BOX } from './materials';
+import { archBand, archedPanel, spandrel } from './shapes';
 
 export interface Entity { id: Id; kind: NodeType; object: THREE.Object3D }
 
@@ -77,6 +78,13 @@ class World {
   step(doc: SceneDoc, views: Record<Id, BuildingView>, selection: Id | null, cut: boolean, dt: number): Id[] {
     this.stats.frames++;
     const touched: Id[] = [];
+    if (this.selected !== selection) {
+      // Walls and openings are rebuilt with the selection's materials; it is a few matrix uploads.
+      for (const id of [this.selected, selection]) {
+        const kind = id ? this.entities.get(id)?.kind : undefined;
+        if (id && (kind === 'wall' || kind === 'opening')) this.dirty.add(id);
+      }
+    }
     if (cut !== this.cut) {
       // Which pieces sit wholly above the cut changes, so every wall and opening is rebuilt.
       this.cut = cut;
@@ -123,7 +131,6 @@ class World {
       for (const id of [this.selected, selection]) {
         const node = id ? doc.nodes[id] : undefined;
         const entity = id ? this.entities.get(id) : undefined;
-        if (node && entity) paint(entity.object, node.type, id === selection);
         if (node?.type === 'zone' || node?.type === 'slab') paintOutline(entity!.object as THREE.Mesh, node, id === selection);
       }
       this.selected = selection;
@@ -187,8 +194,17 @@ export const world = new World();
 const openingsOf = (doc: SceneDoc, w: WallNode) =>
   w.children.map(c => doc.nodes[c]).filter((n): n is OpeningNode => n?.type === 'opening').sort((p, q) => p.offset - q.offset);
 
-/** A box in the local space of a wall or opening group: x along the wall, y up from the floor, z across. */
-interface Box { x0: number; x1: number; y0: number; y1: number; depth: number; material: THREE.Material }
+/**
+ * A box in the local space of a wall or opening group: x along the wall, y up
+ * from the floor, z across. `geometry` swaps the unit cube for a curved part
+ * normalised to the same cube; `hinge` swings the box about a vertical axis
+ * at x = `hinge.x`, z = 0, as an open door leaf or window sash does.
+ */
+interface Box {
+  x0: number; x1: number; y0: number; y1: number; depth: number; material: THREE.Material;
+  geometry?: THREE.BufferGeometry;
+  hinge?: { x: number; angle: number };
+}
 
 const PART = 'part';
 const cutTop = () => (world.cut ? CUT : Infinity);
@@ -235,8 +251,17 @@ function placeBoxes(group: THREE.Object3D, boxes: Box[], cut: boolean) {
   while (parts.length > boxes.length) group.remove(parts.pop()!);
   boxes.forEach((b, i) => {
     const m = parts[i];
-    m.position.set((b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2, 0);
+    const cx = (b.x0 + b.x1) / 2, cy = (b.y0 + b.y1) / 2;
+    if (b.hinge) {
+      const d = cx - b.hinge.x;
+      m.position.set(b.hinge.x + d * Math.cos(b.hinge.angle), cy, -d * Math.sin(b.hinge.angle));
+      m.rotation.set(0, b.hinge.angle, 0);
+    } else {
+      m.position.set(cx, cy, 0);
+      m.rotation.set(0, 0, 0);
+    }
     m.scale.set(Math.max(b.x1 - b.x0, 1e-3), Math.max(b.y1 - b.y0, 1e-3), b.depth);
+    m.geometry = b.geometry ?? UNIT_BOX;
     m.userData.y0 = b.y0;
     // A box that starts above the cut would collapse to a sheet at the cut; it is hidden instead.
     m.visible = !(cut && b.y0 >= CUT - 1e-6);
@@ -266,32 +291,58 @@ function buildWall(group: THREE.Object3D, w: WallNode, openings: OpeningNode[], 
     const top = Math.min(o.sill + o.height, H);
     if (x0 > at + 1e-6) boxes.push({ x0: at, x1: x0, y0: 0, y1: H, depth: t, material });
     if (o.sill > 1e-6) boxes.push({ x0, x1, y0: 0, y1: o.sill, depth: t, material });
-    if (top < H - 1e-6) boxes.push({ x0, x1, y0: top, y1: H, depth: t, material });
+    if (o.shape === 'arched') {
+      // The wall over a rounded head follows the arch down to where it springs.
+      const spring = top - o.width / 2;
+      boxes.push({ x0, x1, y0: spring, y1: H, depth: t, material, geometry: spandrel(o.width, H - spring) });
+    } else if (top < H - 1e-6) boxes.push({ x0, x1, y0: top, y1: H, depth: t, material });
     at = x1;
   }
   boxes.push({ x0: at, x1: len + t / 2, y0: 0, y1: H, depth: t, material });
   placeBoxes(group, boxes, cut);
 }
 
-/** A door is a frame and a leaf; a window is a frame, a sill and a pane of glass. */
+/** How far an open door leaf and an open window sash swing, in radians. */
+const DOOR_SWING = 1.25;
+const SASH_SWING = 0.55;
+const BAND = 0.05;
+
+/**
+ * A door is a frame and a leaf; a window is a frame, a sill board and a pane
+ * of glass. A rounded opening has a curved head and a leaf or pane that
+ * follows it. An open leaf or pane swings about its left side.
+ */
 function buildOpening(group: THREE.Object3D, o: OpeningNode, wall: WallNode, cut: boolean, selected: boolean) {
   group.position.set(o.offset, 0, 0);
   group.updateMatrix();
-  const f = 0.05;
+  const f = BAND;
   const depth = wall.thickness + 0.02;
   const w = o.width / 2;
+  const a = w - f;
   const top = Math.min(o.sill + o.height, wall.height);
-  const frame = selected ? materials.partSelected : materials.frame;
+  const arched = o.shape === 'arched';
+  const spring = arched ? top - w : top;
+  const frame = selected ? materials.partSelected : materials.finish(o.finish, 'frame');
+  const leaf = selected ? materials.partSelected : materials.finish(o.finish, 'leaf');
+  const glass = selected ? materials.glassSelected : materials.glass;
   const boxes: Box[] = [
-    { x0: -w, x1: -w + f, y0: o.sill, y1: top, depth, material: frame },
-    { x0: w - f, x1: w, y0: o.sill, y1: top, depth, material: frame },
-    { x0: -w, x1: w, y0: top - f, y1: top, depth, material: frame },
+    { x0: -w, x1: -w + f, y0: o.sill, y1: spring, depth, material: frame },
+    { x0: w - f, x1: w, y0: o.sill, y1: spring, depth, material: frame },
+    arched
+      ? { x0: -w, x1: w, y0: spring, y1: top, depth, material: frame, geometry: archBand(w, f) }
+      : { x0: -w, x1: w, y0: top - f, y1: top, depth, material: frame },
   ];
+  const panel = (y0: number, d: number, material: THREE.Material, swing: number): Box => {
+    const hinge = o.state === 'open' ? { x: -a, angle: swing } : undefined;
+    return arched
+      ? { x0: -a, x1: a, y0, y1: spring + a, depth: d, material, hinge, geometry: archedPanel(a, spring - y0) }
+      : { x0: -a, x1: a, y0, y1: top - f, depth: d, material, hinge };
+  };
   if (o.kind === 'door') {
-    boxes.push({ x0: -w + f, x1: w - f, y0: 0, y1: top - f, depth: 0.045, material: selected ? materials.partSelected : materials.door });
+    boxes.push(panel(0, 0.045, leaf, DOOR_SWING));
   } else {
     boxes.push({ x0: -w, x1: w, y0: o.sill, y1: o.sill + f, depth: depth + 0.04, material: frame });
-    boxes.push({ x0: -w + f, x1: w - f, y0: o.sill + f, y1: top - f, depth: 0.02, material: selected ? materials.glassSelected : materials.glass });
+    boxes.push(panel(o.sill + f, 0.02, glass, SASH_SWING));
   }
   placeBoxes(group, boxes, cut);
 }
@@ -320,22 +371,6 @@ function zoneGeometry(mesh: THREE.Mesh, z: ZoneNode) {
   swap(mesh, g);
   mesh.position.y = 0.012;
   mesh.updateMatrix();
-}
-
-/** Swaps materials when the selection changes; walls and openings are rebuilt cheaply instead. */
-function paint(object: THREE.Object3D, kind: NodeType, selected: boolean) {
-  if (kind === 'wall') {
-    for (const c of object.children) if (c.userData[PART]) (c as THREE.Mesh).material = selected ? materials.wallSelected : materials.wall;
-  } else if (kind === 'opening') {
-    for (const c of object.children) {
-      if (!c.userData[PART]) continue;
-      const m = c as THREE.Mesh;
-      const glass = m.material === materials.glass || m.material === materials.glassSelected;
-      const leaf = m.material === materials.door || (m.material === materials.partSelected && m.scale.z < 0.05);
-      m.material = glass ? (selected ? materials.glassSelected : materials.glass)
-        : selected ? materials.partSelected : leaf ? materials.door : materials.frame;
-    }
-  }
 }
 
 function paintOutline(mesh: THREE.Mesh, node: ZoneNode | SlabNode, selected: boolean) {

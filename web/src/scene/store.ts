@@ -10,7 +10,7 @@
  */
 import { createStore } from 'zustand/vanilla';
 import { useStore } from 'zustand';
-import { ancestor, emptyDoc, remove, validate, SceneError } from './ops';
+import { ancestor, emptyDoc, migrate, remove, validate, SceneError } from './ops';
 import type { Id, LevelMode, OpeningKind, SceneDoc, Vec2 } from './types';
 
 export const HISTORY_LIMIT = 200;
@@ -42,6 +42,13 @@ export interface EditorState {
   interaction: Interaction;
   /** Walls cut at a section height, so rooms can be seen into. A plain setting. */
   cut: boolean;
+  /** Sizes shown on every door and window in the view, not only the selected one. A plain setting. */
+  measure: boolean;
+  /**
+   * The open project: its id in browser storage, and the document as it was
+   * last saved. The project has unsaved changes when `doc !== saved`.
+   */
+  project: { id: string; saved: SceneDoc | null; savedAt: number | null };
   error: string | null;
 }
 
@@ -56,6 +63,8 @@ const initial: EditorState = {
   tool: 'select',
   interaction: { kind: 'idle' },
   cut: true,
+  measure: false,
+  project: { id: 'project-new', saved: null, savedAt: null },
   error: null,
 };
 
@@ -185,7 +194,7 @@ export function redo(): boolean {
 /** Replaces the whole scene. `undoable` keeps the old scene one undo away. */
 export function load(doc: unknown, opts: { undoable?: boolean; label?: string } = {}): boolean {
   let checked: SceneDoc;
-  try { checked = validate(doc); } catch (e) { return fail(e); }
+  try { checked = validate(migrate(doc)); } catch (e) { return fail(e); }
   if (opts.undoable) return commit(() => checked, opts.label ?? 'Load scene');
   set({ ...tidy(checked, { ...state(), selection: null, activeLevel: null }), doc: checked, past: [], future: [], gesture: null, error: null });
   return true;
@@ -240,3 +249,9 @@ export function clearError() {
 export function setCut(cut: boolean) {
   set({ cut });
 }
+
+export function setMeasure(measure: boolean) {
+  set({ measure });
+}
+
+export const isUnsaved = (s: EditorState) => s.doc !== s.project.saved;

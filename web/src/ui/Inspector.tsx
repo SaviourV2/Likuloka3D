@@ -3,8 +3,24 @@
 import { useEffect, useState } from 'react';
 import { addZone, area, rename, setOrigin, updateLevel, updateOpening, updateSlab, updateWall, updateZone } from '@/scene/ops';
 import { commit, removeSelected, useEditor } from '@/scene/store';
-import { ROOM_TYPES, type RoomType, type SceneDoc, type Vec2 } from '@/scene/types';
-import { USE_COLOURS } from '@/ecs/materials';
+import { FINISH_LABELS, OPENING_FINISHES, ROOM_TYPES, type OpeningFinish, type RoomType, type SceneDoc, type Vec2 } from '@/scene/types';
+import { FINISH_SWATCH, USE_COLOURS } from '@/ecs/materials';
+
+/** A row of mutually exclusive choices that each commit one undo step. */
+function Choice<T extends string>({ label, value, options, onPick }: { label: string; value: T; options: [T, string][]; onPick: (v: T) => void }) {
+  return (
+    <div className="field wide">
+      <span>{label}</span>
+      <div className="segmented" role="radiogroup" aria-label={label}>
+        {options.map(([v, text]) => (
+          <button key={v} type="button" role="radio" aria-checked={value === v} data-value={v} onClick={() => { if (v !== value) onPick(v); }}>{text}</button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+const mm = (m: number) => Math.round(m * 1000).toLocaleString('en-GB');
 import { rig } from '@/render/interact';
 
 function Num({ label, value, step = 0.25, onCommit, min }: { label: string; value: number; step?: number; min?: number; onCommit: (v: number) => void }) {
@@ -57,7 +73,8 @@ export default function Inspector() {
           <li>Drag a small ball to add a corner to a slab or zone.</li>
           <li><kbd>D</kbd> Door, <kbd>N</kbd> Window: click a wall to add one. Drag one to slide it.</li>
           <li><kbd>Ctrl</kbd>+<kbd>Z</kbd> Undo, <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> Redo</li>
-          <li><kbd>F</kbd> Frame the scene, <kbd>Esc</kbd> Cancel</li>
+          <li><kbd>M</kbd> Measure doors and windows, <kbd>Ctrl</kbd>+<kbd>S</kbd> Save</li>
+          <li><kbd>F</kbd> Frame the selection or the scene, <kbd>Esc</kbd> Cancel</li>
         </ul>
         {error && <p className="error" role="alert">{error}</p>}
       </aside>
@@ -107,18 +124,30 @@ export default function Inspector() {
       )}
       {node.type === 'opening' && (
         <div className="fields">
-          <div className="segmented" role="radiogroup" aria-label="Kind">
-            {(['door', 'window'] as const).map(k => (
-              <button key={k} type="button" role="radio" aria-checked={node.kind === k} data-kind={k}
-                onClick={() => edit(d => updateOpening(d, id, { kind: k }), k === 'door' ? 'Make a door' : 'Make a window')}>
-                {k === 'door' ? 'Door' : 'Window'}
-              </button>
-            ))}
-          </div>
+          <Choice label="Type" value={node.kind} options={[['door', 'Door'], ['window', 'Window']]}
+            onPick={k => edit(d => updateOpening(d, id, { kind: k }), k === 'door' ? 'Make a door' : 'Make a window')} />
+          <Choice label="Head" value={node.shape} options={[['square', 'Square'], ['arched', 'Rounded']]}
+            onPick={v => edit(d => updateOpening(d, id, { shape: v }), v === 'arched' ? 'Round the head' : 'Square the head')} />
+          <label className="field wide">
+            <span>Frame</span>
+            <select value={node.finish} aria-label="Frame" onChange={e => edit(d => updateOpening(d, id, { finish: e.target.value as OpeningFinish }), 'Change frame')}>
+              {OPENING_FINISHES.map(f => <option key={f} value={f}>{FINISH_LABELS[f]}</option>)}
+            </select>
+            <i className="swatch" style={{ background: FINISH_SWATCH[node.finish] }} aria-hidden="true" />
+          </label>
+          <Choice label="Drawn" value={node.state} options={[['closed', 'Closed'], ['open', 'Open']]}
+            onPick={v => edit(d => updateOpening(d, id, { state: v }), v === 'open' ? `Open the ${node.kind}` : `Close the ${node.kind}`)} />
           <Num label="Width" value={node.width} onCommit={v => edit(d => updateOpening(d, id, { width: v }), 'Change opening width')} />
           <Num label="Height" value={node.height} step={0.05} onCommit={v => edit(d => updateOpening(d, id, { height: v }), 'Change opening height')} />
           <Num label="Sill" value={node.sill} step={0.05} onCommit={v => edit(d => updateOpening(d, id, { sill: v }), 'Change sill height')} />
           <Num label="Along wall" value={node.offset} step={0.125} onCommit={v => edit(d => updateOpening(d, id, { offset: v }), 'Move opening')} />
+          <dl className="measures" aria-label="Measurements">
+            <dt>Size</dt><dd data-measure="size">{mm(node.width)} × {mm(node.height)} mm</dd>
+            <dt>Head height</dt><dd>{mm(node.sill + node.height)} mm</dd>
+            {node.kind === 'window' && <><dt>Sill height</dt><dd>{mm(node.sill)} mm</dd></>}
+            {node.shape === 'arched' && <><dt>Arch radius</dt><dd>{mm(node.width / 2)} mm</dd></>}
+            <WallDepth wall={node.parent} />
+          </dl>
           <p className="figure">Drag it in the view to slide it along its wall.</p>
         </div>
       )}
@@ -132,4 +161,10 @@ export default function Inspector() {
       {error && <p className="error" role="alert">{error}</p>}
     </aside>
   );
+}
+
+/** The thickness of an opening's wall, which its frame must span. */
+function WallDepth({ wall }: { wall: string }) {
+  const t = useEditor(s => { const w = s.doc.nodes[wall]; return w?.type === 'wall' ? w.thickness : 0; });
+  return <><dt>Wall depth</dt><dd>{mm(t)} mm</dd></>;
 }

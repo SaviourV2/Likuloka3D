@@ -18,6 +18,7 @@ import { editor, select } from '@/scene/store';
 import type { SceneDoc } from '@/scene/types';
 import { attachWallTool, rig } from './interact';
 import { SceneRoot } from './nodes';
+import { Labels } from './Labels';
 
 declare module '@react-three/fiber' {
   // eslint-disable-next-line @typescript-eslint/no-empty-object-type
@@ -98,8 +99,20 @@ export function frame(doc: SceneDoc) {
     for (const p of pts) box.expandByPoint(new THREE.Vector3(p[0] + ox, y, p[1] + oz)).expandByPoint(new THREE.Vector3(p[0] + ox, 0, p[1] + oz));
   }
   if (box.isEmpty()) box.set(new THREE.Vector3(-5, 0, -5), new THREE.Vector3(5, 3, 5));
+  fit(box, 4);
+}
+
+/** Points the camera at one node, as it is drawn now: a door, a wall, a level. */
+export function focus(id: string) {
+  const object = world.entities.get(id)?.object;
+  if (!object) return;
+  const box = new THREE.Box3().setFromObject(object);
+  if (!box.isEmpty()) fit(box, 1.6);
+}
+
+function fit(box: THREE.Box3, minRadius: number) {
   const center = box.getCenter(new THREE.Vector3());
-  const radius = Math.max(4, box.getBoundingSphere(new THREE.Sphere()).radius);
+  const radius = Math.max(minRadius, box.getBoundingSphere(new THREE.Sphere()).radius);
   // Fit the bounding sphere in the narrower of the two fields of view.
   const cam = rig.camera as THREE.PerspectiveCamera;
   const vfov = THREE.MathUtils.degToRad(cam.fov ?? 42);
@@ -153,6 +166,7 @@ export default function Viewport() {
       <SceneRoot />
       <Systems />
       <Rig />
+      <Labels />
     </Canvas>
   );
 }
