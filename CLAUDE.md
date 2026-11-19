@@ -24,3 +24,22 @@ Roomlines, a floor plan editor with a 3D view. `README.md` documents the plan fo
 - Animate discrete changes only, and never during a drag. Use `morph()` only for layout changes (view mode, panel): the browser drops clicks while a view transition runs, so content changes such as loading a plan animate with CSS instead. Everything must still work with reduced motion, where changes apply at once.
 - Visibility is the `hidden` attribute. Animate how something enters; never hide it with opacity alone, because the tests and assistive tools read `hidden`.
 - All lengths are metres on a 0.25 m grid. `x` runs left to right and `y` top to bottom.
+
+## The web editor (`web/`)
+
+`web/` is a separate app: Likuloka 3D, a Next.js editor with React Three Fiber, WebGPU and zustand. The rules above are for Roomlines (`app.html`). In `web/` these apply instead; `web/README.md` documents it.
+
+- After any change in `web/`, run its tests and keep them green:
+
+  ```bash
+  cd web && npm install && npm test
+  ```
+
+- It is a static export (`output: 'export'`). Do not add server code, API routes or anything that needs a Node server.
+- Packages are installed from npm and pinned to exact versions.
+- The scene document is immutable. Change it only through the operations in `src/scene/ops.ts`, called through `commit` or a gesture (`begin`, `preview`, `end`) in `src/scene/store.ts`. Never mutate a node: dirty tracking and undo both depend on a changed node having a new identity.
+- Components must not subscribe to node data that a system draws (wall ends, outlines). Systems in `src/ecs/world.ts` update those objects; React only mounts and unmounts them.
+- Pointer modes are values of `interaction` in the store. Add a value for a new mode; do not add a boolean flag. Plain settings, such as `cut`, are plain values.
+- Selection, tools, level modes and `cut` are view state and are not undone.
+- The look follows likuloka.com, as above: cobalt `--accent`, Archivo, JetBrains Mono for figures, and `--crit` for errors and destructive actions.
+- All lengths are metres on a 0.25 m grid. Plan `x` is world `x`, plan `y` is world `z`.

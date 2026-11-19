@@ -1,0 +1,112 @@
+# Likuloka 3D (web)
+
+A building editor that runs in the browser: buildings, levels, walls, zones and slabs, edited directly in 3D. It is a Next.js app that exports to static files, so it deploys as a website rather than a desktop install.
+
+| Part | What is used |
+|---|---|
+| App | Next.js 16 (App Router) with `output: 'export'` |
+| 3D | React Three Fiber 9 on three.js r187's `WebGPURenderer`, which falls back to WebGL 2 when WebGPU is missing |
+| Shading | TSL node materials, compiled to WGSL on WebGPU and to GLSL on WebGL 2 |
+| State | zustand 5, with undo and redo built in |
+
+## Running it
+
+```bash
+npm install
+npm run dev
+```
+
+Open http://localhost:3000. To build the site:
+
+```bash
+npm run build
+```
+
+`out/` is then a plain static site. Upload it to any static host: Vercel, Netlify, Cloudflare Pages, GitHub Pages or an S3 bucket. No server is needed.
+
+## What you can do
+
+- **Hierarchy.** Each building has levels; each level has a slab, zones (rooms) and walls. The scene list on the left shows the tree, and clicking a row selects that node.
+- **Stack, explode, solo.** Each building has its own switch. Stack draws levels at their elevations. Explode pulls them 2.75 m apart so every floor can be seen and edited. Solo shows one level; pick which with its Show button.
+- **Drag walls.** Drag a wall to slide it sideways. Walls joined to its ends stretch to follow. Select a wall to get a ball on each end; drag a ball to move that end.
+- **Reshape slabs and zones.** Select one to get a ball on each corner and a small ball on each edge. Drag a corner to move it. Drag a small ball to add a corner there. Drag a selected zone to move it.
+- **Draw walls.** Press W or choose "Draw walls", then click on the floor. Each click after the first adds a wall from the last point, so walls chain. Escape ends the run; Escape again goes back to Select.
+- **Cut walls.** On by default. Walls are drawn up to 1.2 m so you can see into the rooms. Turn it off to see full height.
+- **Inspector.** On the right. It edits the selected node's numbers. Every change is one undo step.
+- **Undo and redo.** Ctrl+Z and Ctrl+Shift+Z (or Ctrl+Y), or the toolbar. A whole drag is one step.
+- **Import.** "Import plan" reads a Roomlines plan (see the repository README, "Plan format"), in either the `rooms` or the nested `layout` form. It is added as a new building: each room becomes a zone, the room edges become walls (an edge two rooms share becomes one wall), and the outline of all the rooms becomes the slab.
+
+All lengths are metres on a 0.25 m grid. Plan `x` runs left to right and plan `y` top to bottom; in 3D, plan `y` is world `z`. The scene is saved in the browser's local storage under `likuloka3d.scene`.
+
+## How it is built
+
+```
+src/scene/   the document, its operations and the store (no three.js)
+src/ecs/     the world, its systems and the materials
+src/render/  React Three Fiber components and pointer gestures
+src/ui/      the toolbar, scene tree and inspector
+app/         the Next.js page and styles
+```
+
+### The document and undo
+
+The scene is one immutable document: a flat table of nodes (`building`, `level`, `wall`, `zone`, `slab`) that point to their parent and list their children. Every operation in `src/scene/ops.ts` takes a document and returns a new one. Nodes it does not touch keep their object identity.
+
+The store keeps past documents for undo, up to 200. Because untouched nodes are shared, each step costs only the nodes it changed. A drag is a gesture: `begin` records the starting document, each pointer move calls `preview` with an edit that always starts from that document (so the result cannot drift), and `end` records one step. Escape cancels the gesture.
+
+Selection, the tool, level modes and the wall cut are view state, so they are not undone.
+
+### Dirty tracking and the ECS
+
+Because an edit replaces exactly the nodes it touches, the dirty set is just the ids whose node changed identity between two documents (`diff` in `ops.ts`). The store subscription in the viewport adds them to the world's dirty set.
+
+`src/ecs/world.ts` holds the entities: one per node, made of the node's data and the three.js object React mounted for it. Each frame the systems run in order and touch only dirty entities:
+
+| System | What it updates |
+|---|---|
+| walls | The wall's matrix. Every wall shares one unit box geometry, scaled and turned into place, so moving a wall uploads one matrix and builds no geometry. |
+| outlines | The slab's or zone's buffers, rebuilt only for the outline that changed. |
+| layout | Each level's height for stack, explode or solo, eased into place. |
+| selection | Swaps the material of the old and the new selection. |
+
+React mounts and unmounts objects when a parent's `children` list changes. No component reads a wall's coordinates, so moving a wall re-renders no React component: the walls system moves the mesh. The scene tree works the same way, one row per node, so renaming a node re-renders one row.
+
+Frames are drawn on demand: only when the document, the view or the camera changes, while levels are still easing, or while a selected zone pulses.
+
+### On the GPU
+
+The materials are TSL node materials:
+
+- **Wall cut.** The section cut runs in the vertex shader. A wall's top vertices are clamped to the cut height, worked out from the wall's own scale, so cutting every wall costs one uniform write. Picking uses the same cut box on the CPU, so a click hits what is drawn.
+- **Contact shading.** Walls darken toward the floor from their local height.
+- **Selection pulse.** The selected zone pulses from the shader's clock, so it needs no work on the CPU. With reduced motion it holds still.
+
+Geometry itself is built on the CPU, but only for what changed, and walls never need new geometry.
+
+## Scripting
+
+`window.likuloka` drives the editor through the same functions as the buttons:
+
+```js
+likuloka.getDoc()                 // the scene document
+likuloka.getState()               // { tool, selection, views, undo, redo, cut, error, ... }
+likuloka.commit(d => likuloka.ops.offsetWall(d, wallId, 0.5), 'Slide wall')
+likuloka.undo(); likuloka.redo()
+likuloka.select(id)
+likuloka.setView(buildingId, { mode: 'explode' })   // 'stack' | 'explode' | 'solo', and `solo: levelId`
+likuloka.importRoomlines(plan)
+likuloka.stats()                  // what each system updated, and the ids changed in the last frame that changed any
+likuloka.project(levelId, x, y)   // the screen position of a plan point
+likuloka.backend()                // 'WebGPU' or 'WebGL 2'
+```
+
+## Tests
+
+`tests/e2e.cjs` builds nothing itself: it serves `out/` and drives the editor in Chromium with Playwright. It checks the hierarchy, the Roomlines import, dirty tracking (one edit updates one entity), undo and redo, real mouse drags of walls, wall ends, slab corners, edge midpoints and zones, stack, explode and solo, the wall tool, the inspector, import, persistence and the phone layout.
+
+```bash
+npm test                                         # builds, then tests on WebGPU
+LIKULOKA_RENDERER=webgl node tests/e2e.cjs       # the WebGL 2 fallback
+```
+
+Headless Chromium has no GPU here, so the tests use SwiftShader's Vulkan adapter for WebGPU. If that browser cannot start, they run on WebGL 2.
