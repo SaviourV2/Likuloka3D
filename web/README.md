@@ -98,12 +98,24 @@ What the rules enforce, tested against the emulator by `tests/rules.test.cjs`:
 
 - Only members read a project; nobody can list projects that are not theirs.
 - The owner and designers change the scene and name; only the owner removes members or deletes the project; nobody changes ownership.
-- A client changes the scene and name only.
+- A client never writes the scene directly; their saves go through the `saveScene` function, which checks what changed.
 - Joining needs an invite token and gets exactly that invite's role; an invite cannot make an owner.
 - Every save moves `sceneVersion` on by one and is signed by its saver, so two people cannot overwrite each other unnoticed.
 - Versions never change once saved; each is approved at most once, by the member approving, with the server's time; approved versions cannot be deleted.
 
-Which parts of the scene a client may change is enforced by the editor, because the scene is stored as one text field. To enforce it on the server too, add a Cloud Function that compares a client's saved scene with the previous one using `clientRefusal` from `src/scene/access.ts`, and rejects the save; that needs Firebase's Blaze plan.
+**The server-side check.** Clients cannot write a project's scene directly: the rules refuse it. They save through the `saveScene` Cloud Function (`functions/src/index.ts`). It runs the same check as the editor, `clientRefusal` from `src/scene/access.ts` (bundled into the function, so there is one set of rules), against the scene as saved now. It writes the new scene only if every change is one a client may make, and only if it follows the latest save. A changed or scripted editor gets the same refusal as the real one. A client's version must be the project as saved, so a scene cannot be slipped past the check as a version. Designers keep saving directly.
+
+To deploy it (Cloud Functions need Firebase's pay-as-you-go Blaze plan; a small team's use is normally within the free allowance):
+
+```bash
+npm run functions:build
+```
+
+```bash
+npm run deploy:functions
+```
+
+Without the function deployed, designers save as before, and a client's save explains that the function is needed. If your project uses a region other than `us-central1`, set `functionsRegion` in `cloud.json`.
 
 Data: `projects/{id}` holds `name`, `ownerUid`, `members` (uid to role), `memberUids`, `memberNames`, `scene` (the scene as JSON), `sceneVersion`, `updatedAt` and `updatedBy`; `projects/{id}/versions/{id}` holds `number`, `createdAt`, `author`, `authorUid`, `note`, `scene` and `approval`; `invites/{token}` holds `projectId`, `role`, `createdBy`, `createdAt` and `projectName`.
 
@@ -193,7 +205,7 @@ likuloka.backend()                // 'WebGPU' or 'WebGL 2'
 | `npm test` | Builds, then `tests/e2e.cjs` serves `out/` and drives the editor in Chromium on WebGPU: the hierarchy, the Roomlines import, dirty tracking (one edit updates one entity), undo and redo, real mouse drags of walls, wall ends, slab corners, edge midpoints, zones and doors, doors and windows and their options and rules, measurements, the catalogue, build-ups, the fitting gap, checks, the client view, versions with comparison, approval and restore, the schedule and its CSV, drawings, the IFC file (parsed and meshed with web-ifc), projects and files, older scenes, stack, explode and solo, the wall tool, persistence and the phone layout. |
 | `npm run test:webgl` | The same, on the WebGL 2 fallback. |
 | `npm run test:rules` | `tests/rules.test.cjs`: every Firestore rule, against the Firestore emulator. |
-| `npm run test:cloud` | `tests/cloud.e2e.cjs`: a designer and a client in two browsers against the Auth and Firestore emulators: accounts, moving a project to the cloud, share links, joining, the client's limits, saving, the notice and refusal when someone else saved, versions and approval in the cloud, removing a member, and reloads. |
+| `npm run test:cloud` | `tests/cloud.e2e.cjs`: a designer and a client in two browsers against the Auth, Firestore and Functions emulators: accounts, moving a project to the cloud, share links, joining, the client's limits in the editor and on the server (a modified editor's moved wall and custom size are refused by `saveScene`), saving, the notice and refusal when someone else saved, versions and approval in the cloud, removing a member, and reloads. |
 | `npm run test:all` | All four. |
 
 Headless Chromium has no GPU here, so the tests use SwiftShader's Vulkan adapter for WebGPU. If that browser cannot start, they run on WebGL 2. The Firebase emulators need Java.

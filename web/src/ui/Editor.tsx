@@ -333,6 +333,7 @@ export default function Editor() {
         accept: cloud.acceptInvite,
         members: cloud.members,
         removeMember: cloud.removeMember,
+        sendSceneUnchecked: cloud.sendSceneUnchecked,
       },
       save: cloud.save,
       projects: {

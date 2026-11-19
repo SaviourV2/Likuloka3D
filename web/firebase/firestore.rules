@@ -14,14 +14,15 @@ rules_version = '2';
 // - Members read their projects; nobody else can read or list them.
 // - The owner and designers change anything but ownership; only the owner deletes the
 //   project or removes members.
-// - A client changes the scene and name only. Which parts of the scene a client may
-//   change (doors, windows, rooms) is enforced by the editor, not here: the scene is
-//   one text field. To enforce it on the server, add a Cloud Function that compares
-//   the scenes; see web/README.md.
+// - A client never writes the scene directly. Clients save through the `saveScene`
+//   Cloud Function (functions/src/index.ts), which runs the same check as the editor on
+//   what changed (doors, windows, rooms only) and writes with admin access.
 // - Anyone signed in who has an invite token can join that project, with that
 //   invite's role and nothing more.
-// - Any member can save a version; a version's content never changes, and it can be
-//   approved once, by the member who approves it. Approved versions cannot be deleted.
+// - Any member can save a version; a client's version must be the project as saved, so
+//   a client cannot slip a scene past the check by saving it as a version. A version's
+//   content never changes, and it can be approved once, by the member who approves it.
+//   Approved versions cannot be deleted.
 
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -60,7 +61,7 @@ service cloud.firestore {
         && sceneShape(request.resource.data);
 
       allow update: if signedIn() && membersConsistent(request.resource.data) && (
-        designerUpdate() || clientUpdate() || joinWithInvite() || ownerRemovesMember()
+        designerUpdate() || joinWithInvite() || ownerRemovesMember()
       );
 
       allow delete: if roleIn(resource.data) == 'owner';
@@ -68,14 +69,6 @@ service cloud.firestore {
       // Designers: the scene, name and their own name; never ownership or membership.
       function designerUpdate() {
         return isDesigner(resource.data)
-          && request.resource.data.diff(resource.data).affectedKeys()
-               .hasOnly(['scene', 'name', 'sceneVersion', 'updatedAt', 'updatedBy', 'memberNames'])
-          && savesInTurn();
-      }
-
-      // Clients: the scene and name only.
-      function clientUpdate() {
-        return roleIn(resource.data) == 'client'
           && request.resource.data.diff(resource.data).affectedKeys()
                .hasOnly(['scene', 'name', 'sceneVersion', 'updatedAt', 'updatedBy', 'memberNames'])
           && savesInTurn();
@@ -116,6 +109,7 @@ service cloud.firestore {
         allow read: if roleIn(project(projectId)) != null;
 
         allow create: if roleIn(project(projectId)) != null
+          && (roleIn(project(projectId)) != 'client' || request.resource.data.scene == project(projectId).scene)
           && request.resource.data.authorUid == uid()
           && request.resource.data.approval == null
           && request.resource.data.number is int

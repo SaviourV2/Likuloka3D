@@ -23,6 +23,8 @@ type Auth = import('firebase/auth').Auth;
 type Firestore = import('firebase/firestore').Firestore;
 type FS = typeof import('firebase/firestore');
 type AU = typeof import('firebase/auth');
+type Functions = import('firebase/functions').Functions;
+type FN = typeof import('firebase/functions');
 
 export interface CloudConfig {
   apiKey: string;
@@ -30,15 +32,23 @@ export interface CloudConfig {
   projectId: string;
   appId: string;
   /** For local development and tests: where the Firebase emulators listen. */
-  emulators?: { auth?: string; firestore?: { host: string; port: number } };
+  /** Where the Cloud Functions run; Firebase's default is us-central1. */
+  functionsRegion?: string;
+  emulators?: { auth?: string; firestore?: { host: string; port: number }; functions?: { host: string; port: number } };
 }
 
 export type MemberRole = 'owner' | 'designer' | 'client';
 export interface CloudProject { id: string; name: string; updatedAt: number | null; role: MemberRole }
 export interface Member { uid: string; name: string; role: MemberRole }
 
-let sdk: { app: FirebaseApp; auth: Auth; db: Firestore; fs: FS; au: AU } | null = null;
+let sdk: { app: FirebaseApp; auth: Auth; db: Firestore; fs: FS; au: AU; functions: Functions; fn: FN } | null = null;
 let unwatch: (() => void) | null = null;
+/**
+ * Settles once a new account has its display name. Creating an account signs
+ * in before the name is set, and joining a project from a share link must
+ * wait for it, so the others see the name and not the email.
+ */
+let profileReady: Promise<void> = Promise.resolve();
 
 const setCloud = (patch: Partial<ReturnType<typeof editor.getState>['cloud']>) =>
   editor.setState(s => ({ cloud: { ...s.cloud, ...patch } }));
@@ -66,6 +76,15 @@ export function explain(e: unknown): string {
     unavailable: 'Could not reach the cloud. Check the connection and try again.',
     'not-found': 'That project no longer exists, or you have no access to it.',
   };
+  // The saveScene function's own refusals carry their reason; say it as it is.
+  if (code.startsWith('functions/')) {
+    const message = e instanceof Error ? e.message : '';
+    if (code === 'functions/not-found' && !/project/i.test(message) || code === 'functions/internal' && /internal/i.test(message)) {
+      return 'Saving as a client needs the saveScene Cloud Function, which is not deployed on this site. Ask your designer to deploy it.';
+    }
+    if (code === 'functions/unavailable') return known.unavailable;
+    return message;
+  }
   return known[code] ?? (e instanceof Error ? e.message : String(e));
 }
 
@@ -83,13 +102,15 @@ export async function startCloud(): Promise<boolean> {
   }
   setCloud({ status: 'starting' });
   try {
-    const [{ initializeApp, getApps }, au, fs] = await Promise.all([import('firebase/app'), import('firebase/auth'), import('firebase/firestore')]);
+    const [{ initializeApp, getApps }, au, fs, fn] = await Promise.all([import('firebase/app'), import('firebase/auth'), import('firebase/firestore'), import('firebase/functions')]);
     const app = getApps()[0] ?? initializeApp(config);
     const auth = au.getAuth(app);
     const db = fs.getFirestore(app);
     if (config.emulators?.auth) au.connectAuthEmulator(auth, config.emulators.auth, { disableWarnings: true });
     if (config.emulators?.firestore) fs.connectFirestoreEmulator(db, config.emulators.firestore.host, config.emulators.firestore.port);
-    sdk = { app, auth, db, fs, au };
+    const functions = fn.getFunctions(app, config.functionsRegion ?? 'us-central1');
+    if (config.emulators?.functions) fn.connectFunctionsEmulator(functions, config.emulators.functions.host, config.emulators.functions.port);
+    sdk = { app, auth, db, fs, au, functions, fn };
     setCloudVersions(cloudVersions);
     await new Promise<void>(resolve => {
       au.onAuthStateChanged(auth, u => {
@@ -120,9 +141,15 @@ export async function signInWithEmail(email: string, password: string) {
 export async function createAccount(name: string, email: string, password: string) {
   if (!sdk) throw new Error('Cloud saving is not set up on this site.');
   if (name.trim().length < 2) throw new Error('Type your name, as clients and designers will see it.');
-  const cred = await sdk.au.createUserWithEmailAndPassword(sdk.auth, email.trim(), password);
-  await sdk.au.updateProfile(cred.user, { displayName: name.trim() });
-  setCloud({ user: { uid: cred.user.uid, name: name.trim(), email: cred.user.email } });
+  let done = () => {};
+  profileReady = new Promise(r => { done = r; });
+  try {
+    const cred = await sdk.au.createUserWithEmailAndPassword(sdk.auth, email.trim(), password);
+    await sdk.au.updateProfile(cred.user, { displayName: name.trim() });
+    setCloud({ user: { uid: cred.user.uid, name: name.trim(), email: cred.user.email } });
+  } finally {
+    done();
+  }
 }
 
 export async function signOut() {
@@ -156,11 +183,17 @@ export async function saveToCloud(): Promise<boolean> {
       watch(ref.id);
       return true;
     }
-    const v = (s.project.cloudVersion ?? 1) + 1;
-    await fs.updateDoc(fs.doc(db, 'projects', s.project.id), {
-      name: s.doc.name, scene: sceneText(s.doc), sceneVersion: v,
-      updatedAt: fs.serverTimestamp(), updatedBy: user.uid, [`memberNames.${user.uid}`]: user.name,
-    });
+    let v = (s.project.cloudVersion ?? 1) + 1;
+    if (s.role.kind === 'client') {
+      // A client's save goes through the server, which checks what changed before writing it.
+      const call = sdk!.fn.httpsCallable<{ projectId: string; scene: string; baseVersion: number; name: string }, { sceneVersion: number }>(sdk!.functions, 'saveScene');
+      v = (await call({ projectId: s.project.id, scene: sceneText(s.doc), baseVersion: s.project.cloudVersion ?? 1, name: user.name })).data.sceneVersion;
+    } else {
+      await fs.updateDoc(fs.doc(db, 'projects', s.project.id), {
+        name: s.doc.name, scene: sceneText(s.doc), sceneVersion: v,
+        updatedAt: fs.serverTimestamp(), updatedBy: user.uid, [`memberNames.${user.uid}`]: user.name,
+      });
+    }
     editor.setState(st => ({ project: { ...st.project, saved: s.doc, savedAt: Date.now(), cloudVersion: v }, error: null }));
     setCloud({ notice: null });
     return true;
@@ -253,6 +286,7 @@ export async function createInvite(role: 'designer' | 'client'): Promise<string>
 
 /** Joins a project from a share link, then opens it. */
 export async function acceptInvite(projectId: string, invite: string): Promise<boolean> {
+  await profileReady;
   const { fs, db, user } = need();
   try {
     const inv = await fs.getDoc(fs.doc(db, 'invites', invite));
@@ -316,7 +350,13 @@ const rawVersions: VersionStore = {
     const latest = await fs.getDocs(fs.query(fs.collection(db, 'projects', projectId, 'versions'), fs.orderBy('number', 'desc'), fs.limit(1)));
     const number = (latest.docs[0]?.data().number ?? 0) + 1;
     const ref = fs.doc(fs.collection(db, 'projects', projectId, 'versions'));
-    await fs.setDoc(ref, { number, createdAt: fs.serverTimestamp(), author: v.author.slice(0, 80), authorUid: user.uid, note: v.note.slice(0, 200), scene: sceneText(v.doc), approval: null });
+    // A client's version is the project as saved, copied exactly: the rules check it is.
+    let scene = sceneText(v.doc);
+    if (editor.getState().role.kind === 'client') {
+      const project = await fs.getDoc(fs.doc(db, 'projects', projectId));
+      scene = project.data()?.scene ?? scene;
+    }
+    await fs.setDoc(ref, { number, createdAt: fs.serverTimestamp(), author: v.author.slice(0, 80), authorUid: user.uid, note: v.note.slice(0, 200), scene, approval: null });
     return { ...v, id: ref.id, number };
   },
   async approve(projectId, versionId, a: Approval) {
@@ -342,4 +382,21 @@ const cloudVersions: VersionStore = {
 export async function reload(): Promise<boolean> {
   const p = editor.getState().project;
   return p.where === 'cloud' ? openCloudProject(p.id) : false;
+}
+
+/**
+ * Sends a scene to the saveScene function as it is, without the editor's own
+ * check: what a changed or scripted editor could do. For testing that the
+ * server refuses what the editor would.
+ */
+export async function sendSceneUnchecked(doc: SceneDoc): Promise<number> {
+  if (!sdk) throw new Error('Cloud saving is not set up on this site.');
+  const s = editor.getState();
+  const call = sdk.fn.httpsCallable<{ projectId: string; scene: string; baseVersion: number }, { sceneVersion: number }>(sdk.functions, 'saveScene');
+  try {
+    // Each call is a save in turn, so it must follow the latest one.
+    return (await call({ projectId: s.project.id, scene: sceneText(doc), baseVersion: s.project.cloudVersion ?? 1 })).data.sceneVersion;
+  } catch (e) {
+    throw new Error(explain(e));
+  }
 }

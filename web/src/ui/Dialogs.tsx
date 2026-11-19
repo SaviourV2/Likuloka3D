@@ -332,7 +332,11 @@ function VersionsBody({ dialog }: { dialog: DialogRef }) {
         <label className="field wide"><span>Note</span><input aria-label="Version note" value={note} maxLength={200} placeholder="What this version is for" onChange={e => setNote(e.target.value)} /></label>
         <button type="button" className="primary" data-action="save-version" disabled={!name.trim()} onClick={() => run(async () => {
           rememberName(name);
-          await versions.add(project.id, { createdAt: Date.now(), author: name.trim(), note: note.trim() || 'No note', doc, approval: null });
+          // A client's version is the project as saved, so unsaved changes are saved first.
+          if (client && project.where === 'cloud' && isUnsaved(editor.getState()) && !(await cloud.save())) {
+            throw new Error(editor.getState().error ?? 'Save the project before saving a version.');
+          }
+          await versions.add(project.id, { createdAt: Date.now(), author: name.trim(), note: note.trim() || 'No note', doc: editor.getState().doc, approval: null });
           setNote('');
         })}>Save this as a version</button>
       </div>

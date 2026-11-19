@@ -16,7 +16,7 @@ const ROOT = path.join(__dirname, '..', 'out');
 const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.txt': 'text/plain' };
 const CONFIG = {
   apiKey: 'demo-key', authDomain: 'demo-likuloka.firebaseapp.com', projectId: 'demo-likuloka', appId: 'demo-app',
-  emulators: { auth: 'http://127.0.0.1:9099', firestore: { host: '127.0.0.1', port: 8080 } },
+  emulators: { auth: 'http://127.0.0.1:9099', firestore: { host: '127.0.0.1', port: 8080 }, functions: { host: '127.0.0.1', port: 5001 } },
 };
 let passed = 0, failed = 0;
 function ok(name, cond, detail) {
@@ -111,9 +111,19 @@ async function createAccount(page, name, email) {
     ok('the client cannot move walls', !moved && /client view/.test((await state(c)).error), (await state(c)).error);
     const door = await c.evaluate(() => Object.values(likuloka.getDoc().nodes).find(n => n.type === 'opening' && n.kind === 'door' && n.finish === 'timber').id);
     ok('the client can change a door’s finish', await c.evaluate(i => likuloka.commit(d => likuloka.ops.updateOpening(d, i, { finish: 'steel' }), 'Steel'), door));
-    ok('the client saves to the cloud', await c.evaluate(() => likuloka.save()));
+    ok('the client saves to the cloud, through the server’s check', await c.evaluate(() => likuloka.save()));
     cs = await state(c);
     ok('after saving, the client’s copy is the saved one', !cs.project.unsaved);
+
+    // A changed editor that skips its own check is refused by the server.
+    const tampered = await c.evaluate(i => likuloka.cloud.sendSceneUnchecked(likuloka.ops.offsetWall(likuloka.getDoc(), i, 1)).then(() => 'saved', e => e.message), wallId);
+    ok('the server refuses a client’s scene that moves a wall', /client view/.test(tampered), tampered);
+    const resized = await c.evaluate(i => likuloka.cloud.sendSceneUnchecked(likuloka.ops.updateOpening(likuloka.getDoc(), i, { width: 1.7 })).then(() => 'saved', e => e.message), door);
+    ok('the server refuses a custom size from a client', /catalogue/.test(resized), resized);
+    const allowed = await c.evaluate(i => likuloka.cloud.sendSceneUnchecked(likuloka.ops.updateOpening(likuloka.getDoc(), i, { state: 'open' })).then(v => v, e => e.message), door);
+    ok('the server accepts a change a client may make', typeof allowed === 'number' && allowed > 2, allowed);
+    await c.evaluate(() => likuloka.cloud.open(likuloka.getState().project.id));
+    cs = await state(c);
 
     // ---- the designer sees it -----------------------------------------------------------------
     await until(d, () => !!document.querySelector('[data-notice="remote"]'));
@@ -122,8 +132,8 @@ async function createAccount(page, name, email) {
     await d.evaluate(() => likuloka.commit(doc => likuloka.ops.renameProject(doc, 'Beach house'), 'Rename'));
     ok('a save from an out-of-date copy is refused, saying who saved', !(await d.evaluate(() => likuloka.save())) && /Carl Client saved this project after you opened it/.test((await state(d)).error), (await state(d)).error);
     await d.locator('[data-action="reload"]').click();
-    await until(d, i => likuloka.getDoc().nodes[i]?.finish === 'steel', door);
-    ok('Reload brings in the client’s change', true);
+    await until(d, i => likuloka.getDoc().nodes[i]?.finish === 'steel' && likuloka.getDoc().nodes[i]?.state === 'open', door);
+    ok('Reload brings in the client’s changes', true);
     ok('the designer still has the designer view', (await d.evaluate(() => likuloka.role())).kind === 'designer');
 
     // ---- versions and sign-off --------------------------------------------------------------------
@@ -140,8 +150,14 @@ async function createAccount(page, name, email) {
     const vc = c.locator('dialog[aria-labelledby="versions-title"]');
     await until(c, () => document.querySelectorAll('.versions li').length === 1);
     ok('the client sees the version', (await c.locator('.versions li').first().textContent()).includes('Steel front door'));
+    // A client's version is the project as saved: unsaved changes are saved, through the check, first.
+    await c.evaluate(i => likuloka.commit(d => likuloka.ops.updateOpening(d, i, { state: 'closed' }), 'Close'), door);
     await vc.getByLabel('Your name').fill('Carl Client');
-    await vc.locator('[data-action="approve"]').click();
+    await vc.getByLabel('Version note').fill('Door shut');
+    await vc.locator('[data-action="save-version"]').click();
+    await until(c, () => document.querySelectorAll('.versions li').length === 2);
+    ok('a client saves a version, saving the project first', (await c.locator('.versions li').first().textContent()).includes('Door shut') && !(await state(c)).project.unsaved);
+    await c.locator('.versions li[data-version="1"] [data-action="approve"]').click();
     await vc.locator('.approve input[type="checkbox"]').check();
     await vc.locator('[data-action="confirm-approve"]').click();
     await until(c, () => !!document.querySelector('.versions [data-approval]'));
@@ -168,7 +184,10 @@ async function createAccount(page, name, email) {
     await d.waitForFunction(() => window.likuloka && likuloka.cloud.state().status === 'signed-in', null, { timeout: 60000 });
     const after = await state(d);
     ok('after a reload the cloud project is still open and saved', after.project.id === projectId && !after.project.unsaved, after.project);
-    ok('saving it again works', await d.evaluate(() => likuloka.save()));
+    // The client saved since; a fresh copy saves again.
+    await d.evaluate(() => likuloka.cloud.open(likuloka.getState().project.id));
+    await d.evaluate(() => likuloka.commit(doc => likuloka.ops.renameProject(doc, 'Beach house v2'), 'Rename'));
+    ok('saving it again works', await d.evaluate(() => likuloka.save()), (await state(d)).error);
 
     ok('no page errors', dana.errors.length === 0 && carl.errors.length === 0, [...dana.errors, ...carl.errors].slice(0, 5));
   } catch (e) {

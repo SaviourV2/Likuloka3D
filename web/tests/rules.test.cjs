@@ -57,7 +57,8 @@ const base = (owner) => ({
   await check('a save that skips a version is refused', assertFails(save(designer, 'dan', 4)));
   await check('a save that would overwrite someone else’s is refused', assertFails(save(owner, 'olive', 2)));
   await check('a save signed as someone else is refused', assertFails(save(designer, 'olive', 3)));
-  await check('a client saves the scene', assertSucceeds(save(client, 'cara', 3)));
+  await check('a client cannot write the scene directly; saves go through the function', assertFails(save(client, 'cara', 3)));
+  await check('the next save is still in turn', assertSucceeds(save(designer, 'dan', 3)));
   await check('a client cannot change members', assertFails(updateDoc(P(client), { 'members.cara': 'designer' })));
   await check('a client cannot change ownership', assertFails(save(client, 'cara', 4, { ownerUid: 'cara' })));
   await check('a designer cannot change ownership', assertFails(save(designer, 'dan', 4, { ownerUid: 'dan' })));
@@ -67,7 +68,9 @@ const base = (owner) => ({
   // Versions.
   const V = (db, id) => doc(db, 'projects', 'p1', 'versions', id);
   const version = (uid, extra = {}) => ({ number: 1, createdAt: serverTimestamp(), author: 'Cara', authorUid: uid, note: 'First look', scene, approval: null, ...extra });
-  await check('a client saves a version', assertSucceeds(setDoc(V(client, 'v1'), version('cara'))));
+  await check('a client saves a version of the project as saved', assertSucceeds(setDoc(V(client, 'v1'), version('cara'))));
+  await check('a client cannot save a different scene as a version', assertFails(setDoc(V(client, 'v1b'), version('cara', { scene: scene.replace('Test', 'Tampered') }))));
+  await check('a designer can save a version of a design not yet saved', assertSucceeds(setDoc(V(designer, 'v1c'), version('dan', { author: 'Dan', scene: scene.replace('Test', 'Draft') }))));
   await check('a version cannot be saved already approved', assertFails(setDoc(V(client, 'v2'), version('cara', { approval: { by: 'Cara', uid: 'cara' } }))));
   await check('a version cannot be saved in someone else’s name', assertFails(setDoc(V(designer, 'v3'), version('cara'))));
   await check('a stranger cannot read versions', assertFails(getDoc(V(stranger, 'v1'))));

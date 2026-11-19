@@ -9,10 +9,12 @@
     "test": "next build && node tests/e2e.cjs",
     "test:webgl": "LIKULOKA_RENDERER=webgl node tests/e2e.cjs",
     "test:rules": "firebase emulators:exec --only firestore --project demo-likuloka \"node tests/rules.test.cjs\"",
-    "test:cloud": "firebase emulators:exec --only auth,firestore --project demo-likuloka \"node tests/cloud.e2e.cjs\"",
+    "test:cloud": "npm run functions:build && firebase emulators:exec --only auth,firestore,functions --project demo-likuloka \"node tests/cloud.e2e.cjs\"",
     "test:all": "npm test && npm run test:webgl && npm run test:rules && npm run test:cloud",
     "deploy:rules": "firebase deploy --only firestore:rules,firestore:indexes",
-    "deploy:hosting": "npm run build && firebase deploy --only hosting"
+    "deploy:hosting": "npm run build && firebase deploy --only hosting",
+    "functions:build": "npm --prefix functions install --no-audit --no-fund && npm --prefix functions run build",
+    "deploy:functions": "firebase deploy --only functions"
   },
   "dependencies": {
     "@react-three/fiber": "9.8.2",

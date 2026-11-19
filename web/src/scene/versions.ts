@@ -14,7 +14,7 @@
  * Versions are stored where the project is: in the browser for a local
  * project, in the cloud for a cloud project (`cloud.ts` supplies that store).
  */
-import { migrate, validate } from './ops';
+import { migrate, stableJson, validate } from './ops';
 import { schedule, type ScheduleRow } from './schedule';
 import type { Catalogue } from './catalogue';
 import type { SceneDoc } from './types';
@@ -96,12 +96,7 @@ export function approvalFrom(by: string, note: string): Approval {
 
 // ---- comparing ------------------------------------------------------------------
 
-/** JSON with keys in a fixed order, so equal data gives equal text whatever order it was built in. */
-function stable(v: unknown): string {
-  if (Array.isArray(v)) return `[${v.map(stable).join(',')}]`;
-  if (v && typeof v === 'object') return `{${Object.keys(v).sort().map(k => `${JSON.stringify(k)}:${stable((v as Record<string, unknown>)[k])}`).join(',')}}`;
-  return JSON.stringify(v);
-}
+const stable = stableJson;
 
 export interface FieldChange { field: string; from: string; to: string }
 export interface Comparison {

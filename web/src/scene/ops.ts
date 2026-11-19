@@ -526,6 +526,16 @@ export function remove(doc: SceneDoc, id: Id): SceneDoc {
 
 // ---- diffing -----------------------------------------------------------------
 
+/** JSON with keys in a fixed order, so equal data gives equal text whatever order it was built in. */
+export function stableJson(v: unknown): string {
+  if (Array.isArray(v)) return `[${v.map(stableJson).join(',')}]`;
+  if (v && typeof v === 'object') return `{${Object.keys(v).sort().map(k => `${JSON.stringify(k)}:${stableJson((v as Record<string, unknown>)[k])}`).join(',')}}`;
+  return JSON.stringify(v) ?? 'null';
+}
+
+/** Equal data, whether or not it is the same object. */
+export const sameData = (a: unknown, b: unknown) => a === b || stableJson(a) === stableJson(b);
+
 /** Ids whose node was added, changed or removed between two documents. */
 export function diff(prev: SceneDoc, next: SceneDoc): Set<Id> {
   const out = new Set<Id>();
@@ -548,10 +558,11 @@ export function migrate(raw: unknown): unknown {
   if (!doc.nodes || typeof doc.nodes !== 'object') return raw;
   const nodes: Record<string, Record<string, unknown>> = {};
   for (const [id, n] of Object.entries(doc.nodes)) {
-    if (n?.type === 'wall') nodes[id] = { children: [], layers: [], wallType: null, ...n };
+    // Defaults go after the node's own keys, so a node that needs none keeps its exact JSON.
+    if (n?.type === 'wall') nodes[id] = { ...n, children: n.children ?? [], layers: n.layers ?? [], wallType: n.wallType ?? null };
     else if (n?.type === 'opening') {
       const kind = n.kind === 'window' ? 'window' : 'door';
-      nodes[id] = { shape: 'square', finish: OPENING_DEFAULTS[kind].finish, state: 'closed', product: null, ...n };
+      nodes[id] = { ...n, shape: n.shape ?? 'square', finish: n.finish ?? OPENING_DEFAULTS[kind].finish, state: n.state ?? 'closed', product: n.product ?? null };
     } else nodes[id] = n;
   }
   const settings = { ...DEFAULT_SETTINGS, ...(typeof (doc as { settings?: unknown }).settings === 'object' ? (doc as { settings: object }).settings : {}) };
