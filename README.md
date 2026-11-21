@@ -8,6 +8,10 @@ A floor plan editor that runs in one HTML page. You draw rooms as rectangles on 
 ./build.sh
 ```
 
+## Likuloka 3D
+
+`web/` holds a second app: a building editor on Next.js, React Three Fiber and WebGPU. It has buildings, levels, walls, zones and slabs, all edited in 3D, with undo and redo. It imports Roomlines plans. See `web/README.md`.
+
 ## What it does
 
 - Rooms snap to a 0.25 m grid. Drag a room to move it and drag a corner to resize it.

@@ -1,0 +1,17 @@
+{
+  "name": "likuloka3d-functions",
+  "private": true,
+  "description": "Cloud Functions for Likuloka 3D: the server-side check on what a client may save.",
+  "main": "lib/index.js",
+  "engines": { "node": "22" },
+  "scripts": {
+    "build": "esbuild src/index.ts --bundle --platform=node --target=node22 --format=cjs --outfile=lib/index.js --external:firebase-admin --external:firebase-functions"
+  },
+  "dependencies": {
+    "firebase-admin": "14.5.1",
+    "firebase-functions": "7.4.0"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2"
+  }
+}

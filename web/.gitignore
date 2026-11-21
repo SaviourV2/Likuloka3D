@@ -1,0 +1,11 @@
+.next/
+out/
+next-env.d.ts
+*.tsbuildinfo
+tests/screenshots/
+
+# Firebase emulator logs and deploy cache
+*-debug.log
+.firebase/
+# The deployment's cloud config is added when deploying; see README "Cloud projects".
+public/cloud.json

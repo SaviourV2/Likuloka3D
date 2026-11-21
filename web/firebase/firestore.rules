@@ -1,0 +1,145 @@
+rules_version = '2';
+
+// Likuloka 3D cloud projects.
+//
+// projects/{projectId}
+//   name, ownerUid, members { uid: 'owner' | 'designer' | 'client' }, memberUids [uid],
+//   memberNames { uid: name }, scene (the scene as JSON text), sceneVersion, updatedAt, updatedBy
+// projects/{projectId}/versions/{versionId}
+//   number, createdAt, author, authorUid, note, scene, approval (null, then { by, at, note, uid })
+// invites/{token}
+//   projectId, role ('designer' | 'client'), createdBy, createdAt, projectName
+//
+// Who may do what:
+// - Members read their projects; nobody else can read or list them.
+// - The owner and designers change anything but ownership; only the owner deletes the
+//   project or removes members.
+// - A client never writes the scene directly. Clients save through the `saveScene`
+//   Cloud Function (functions/src/index.ts), which runs the same check as the editor on
+//   what changed (doors, windows, rooms only) and writes with admin access.
+// - Anyone signed in who has an invite token can join that project, with that
+//   invite's role and nothing more.
+// - Any member can save a version; a client's version must be the project as saved, so
+//   a client cannot slip a scene past the check by saving it as a version. A version's
+//   content never changes, and it can be approved once, by the member who approves it.
+//   Approved versions cannot be deleted.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function uid() { return request.auth.uid; }
+    function roleIn(data) { return signedIn() && uid() in data.members ? data.members[uid()] : null; }
+    function project(projectId) { return get(/databases/$(database)/documents/projects/$(projectId)).data; }
+    function isDesigner(data) { return roleIn(data) in ['owner', 'designer']; }
+
+    // members and memberUids must agree, and every role must be a known one.
+    function membersConsistent(data) {
+      return data.memberUids.toSet() == data.members.keys().toSet()
+        && data.members.values().toSet().hasOnly(['owner', 'designer', 'client']);
+    }
+
+    function sceneShape(data) {
+      return data.name is string && data.name.size() > 0 && data.name.size() <= 80
+        && data.scene is string && data.scene.size() < 900000
+        && data.sceneVersion is int;
+    }
+
+    match /projects/{projectId} {
+      allow get: if roleIn(resource.data) != null;
+      // Listing is allowed only for queries that ask for the caller's own projects.
+      allow list: if signedIn() && uid() in resource.data.memberUids;
+
+      allow create: if signedIn()
+        && request.resource.data.ownerUid == uid()
+        && request.resource.data.members == { (uid()): 'owner' }
+        && request.resource.data.memberUids == [uid()]
+        && request.resource.data.sceneVersion == 1
+        && request.resource.data.updatedBy == uid()
+        && request.resource.data.memberNames is map
+        && request.resource.data.memberNames.keys().hasOnly([uid()])
+        && sceneShape(request.resource.data);
+
+      allow update: if signedIn() && membersConsistent(request.resource.data) && (
+        designerUpdate() || joinWithInvite() || ownerRemovesMember()
+      );
+
+      allow delete: if roleIn(resource.data) == 'owner';
+
+      // Designers: the scene, name and their own name; never ownership or membership.
+      function designerUpdate() {
+        return isDesigner(resource.data)
+          && request.resource.data.diff(resource.data).affectedKeys()
+               .hasOnly(['scene', 'name', 'sceneVersion', 'updatedAt', 'updatedBy', 'memberNames'])
+          && savesInTurn();
+      }
+
+      // Each save moves sceneVersion on by one and is signed by the saver, so two
+      // people cannot overwrite each other unnoticed.
+      function savesInTurn() {
+        return sceneShape(request.resource.data)
+          && request.resource.data.sceneVersion == resource.data.sceneVersion + 1
+          && request.resource.data.updatedBy == uid()
+          && request.resource.data.memberNames.diff(resource.data.memberNames).affectedKeys().hasOnly([uid()]);
+      }
+
+      // Someone with an invite adds exactly themselves, with exactly the invite's role.
+      function joinWithInvite() {
+        let invite = get(/databases/$(database)/documents/invites/$(request.resource.data.joinedWith)).data;
+        let added = request.resource.data.members.diff(resource.data.members);
+        return !(uid() in resource.data.members)
+          && invite.projectId == projectId
+          && added.addedKeys() == [uid()].toSet()
+          && added.changedKeys().size() == 0 && added.removedKeys().size() == 0
+          && request.resource.data.members[uid()] == invite.role
+          && request.resource.data.memberNames.diff(resource.data.memberNames).affectedKeys().hasOnly([uid()])
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['members', 'memberUids', 'memberNames', 'joinedWith']);
+      }
+
+      // The owner removes another member.
+      function ownerRemovesMember() {
+        let removed = request.resource.data.members.diff(resource.data.members);
+        return roleIn(resource.data) == 'owner'
+          && removed.addedKeys().size() == 0 && removed.changedKeys().size() == 0
+          && !(uid() in removed.removedKeys())
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['members', 'memberUids', 'memberNames']);
+      }
+
+      match /versions/{versionId} {
+        allow read: if roleIn(project(projectId)) != null;
+
+        allow create: if roleIn(project(projectId)) != null
+          && (roleIn(project(projectId)) != 'client' || request.resource.data.scene == project(projectId).scene)
+          && request.resource.data.authorUid == uid()
+          && request.resource.data.approval == null
+          && request.resource.data.number is int
+          && request.resource.data.scene is string && request.resource.data.scene.size() < 900000
+          && request.resource.data.note is string && request.resource.data.note.size() <= 200
+          && request.resource.data.author is string && request.resource.data.author.size() <= 80;
+
+        // Approving: once, by the member approving, touching nothing else.
+        allow update: if roleIn(project(projectId)) != null
+          && resource.data.approval == null
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['approval'])
+          && request.resource.data.approval.uid == uid()
+          && request.resource.data.approval.by is string && request.resource.data.approval.by.size() >= 2
+          && request.resource.data.approval.at == request.time;
+
+        allow delete: if isDesigner(project(projectId)) && resource.data.approval == null;
+      }
+    }
+
+    match /invites/{token} {
+      // An invite is read by its token; invites cannot be listed.
+      allow get: if signedIn();
+      allow list: if false;
+      allow create: if signedIn()
+        && token.size() >= 20
+        && request.resource.data.createdBy == uid()
+        && request.resource.data.role in ['designer', 'client']
+        && isDesigner(project(request.resource.data.projectId));
+      allow delete: if signedIn() && resource.data.createdBy == uid();
+      allow update: if false;
+    }
+  }
+}
