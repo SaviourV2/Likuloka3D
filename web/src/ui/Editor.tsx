@@ -23,6 +23,7 @@ import { dxfFile } from '@/scene/dxf';
 import { rememberedName } from '@/scene/versions';
 import { checks } from '@/scene/checks';
 import { furnishLevel } from '@/scene/furnish';
+import { ASSETS, ownFurniture, placeAsset } from '@/scene/assets';
 import { fromDxf, importDxf, parseDxf } from '@/scene/dxfin';
 import { compare, versionStore } from '@/scene/versions';
 
@@ -335,6 +336,9 @@ export default function Editor() {
       setUnderlay: store.setUnderlay,
       scaleUnderlay: store.scaleUnderlay,
       parseDxf, fromDxf, importDxf,
+      assets: () => ASSETS.map(a => a.key),
+      placeAsset: (level: string, key: string, where?: { at?: [number, number]; zone?: string }) => store.commit(d => placeAsset(d, level, key, where)[0], 'Place item'),
+      ownFurniture: (zone: string) => store.commit(d => ownFurniture(d, zone)[0], 'Make furniture editable'),
       furniture: () => ({ files: furniture.models, ...furniture.stats }),
       furnish: (level: string) => furnishLevel(editor.getState().doc, level),
       load: store.load,

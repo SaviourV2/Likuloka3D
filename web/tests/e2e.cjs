@@ -1075,6 +1075,70 @@ async function drag(page, level, grab, by, lift = 0) {
     await c.close();
   }
 
+  // ---- assets: items placed by hand, stairs, the garage ----------------------------------------
+  {
+    const { page: f, context: c, errors } = await open(browser, url);
+    const made = await f.evaluate(() => {
+      likuloka.importRoomlines({ name: 'Villa', rooms: [
+        { name: 'Living', type: 'living', x: 0, y: 0, w: 7, h: 6 }, { name: 'Garage', type: 'garage', x: 7, y: 0, w: 4, h: 6 },
+        { name: 'Hall', type: 'hallway', x: 0, y: 6, w: 5, h: 4 }, { name: 'Bedroom', type: 'bedroom', x: 5, y: 6, w: 6, h: 4 }] }, { openings: true });
+      const d = likuloka.getDoc(), b = d.nodes[d.roots[d.roots.length - 1]], l = d.nodes[b.children[0]];
+      const zs = l.children.map(k => d.nodes[k]).filter(n => n.type === 'zone'), z = n => zs.find(k => k.name === n).id;
+      return { level: l.id, height: l.height, living: z('Living'), garage: z('Garage'), hall: z('Hall'), bedroom: z('Bedroom'), car: likuloka.furnish(l.id).some(p => p.zone === z('Garage') && p.local.label === 'Car') };
+    });
+    ok('a garage is furnished with a car', made.car);
+    const items = () => f.evaluate(l => { const d = likuloka.getDoc(); return d.nodes[l].children.map(k => d.nodes[k]).filter(n => n.type === 'item'); }, made.level);
+    await f.evaluate(i => likuloka.select(i), made.living);
+    await f.selectOption('.assets select[aria-label="Asset group"]', 'Decor');
+    await f.click('[data-asset="shoe-rack"]');
+    await frames(f);
+    let its = await items();
+    const rack = its[0];
+    ok('an asset is placed in the middle of the selected room and selected', its.length === 1 && rack.asset === 'shoe-rack' && rack.at[0] === 3.5 && rack.at[1] === 3 && (await state(f)).selection === rack.id, rack && rack.at);
+    ok('it is listed in the scene and shown in the inspector', (await f.getAttribute('.inspector', 'data-type')) === 'item' && (await f.locator(`.tree [data-id="${rack.id}"]`).count()) === 1);
+    await f.click('.inspector [data-turn="90"]');
+    ok('it turns a quarter turn', (await items())[0].turn === 270);
+    const p0 = await f.evaluate(([l, x, y]) => likuloka.project(l, x, y, 0.95), [made.level, rack.at[0], rack.at[1]]);
+    const p1 = await f.evaluate(([l, x, y]) => likuloka.project(l, x, y, 0.95), [made.level, rack.at[0] + 1, rack.at[1] + 0.5]);
+    await f.mouse.move(p0.x, p0.y); await f.mouse.down(); await f.mouse.move(p1.x, p1.y, { steps: 6 }); await f.mouse.up();
+    await frames(f);
+    const moved = (await items())[0].at;
+    ok('dragging it moves it, in steps of 50 mm', Math.abs(moved[0] - 4.5) < 0.35 && Math.abs(moved[1] - 3.5) < 0.35 && moved.every(v => Math.abs(v * 20 - Math.round(v * 20)) < 1e-6), moved);
+    const before = await f.evaluate(([l, z]) => likuloka.furnish(l).filter(p => p.zone === z).length, [made.level, made.living]);
+    ok('the room\u2019s own furniture stands clear of it', await f.evaluate(([l, z, it]) => { const q = (x0, x1, y0, y1, b) => !(b.x1 <= x0 || b.x0 >= x1 || b.y1 <= y0 || b.y0 >= y1); const d = likuloka.getDoc().nodes[it]; const hw = Math.max(...d.size) / 2; return !likuloka.furnish(l).filter(p => p.zone === z && p.local.label !== 'Rug').some(p => p.boxes.some(b => q(d.at[0] - 0.14, d.at[0] + 0.14, d.at[1] - 0.14, d.at[1] + 0.14, b))); }, [made.level, made.living, rack.id]), before);
+    // a stair made for the level's height
+    await f.evaluate(([l, z]) => likuloka.placeAsset(l, 'stair-straight', { zone: z }), [made.level, made.hall]);
+    const stair = (await items()).find(i => i.asset === 'stair-straight');
+    const top = Math.max(...stair.parts.map(p => p[5]));
+    ok('a stair climbs exactly the height of its level, in 250 mm treads', Math.abs(top - made.height) < 1e-9 && stair.parts.length === Math.round(made.height / 0.175) && Math.abs(stair.size[1] - stair.parts.length * 0.25) < 1e-9, { top, n: stair.parts.length, size: stair.size });
+    // a room's furniture made into items, then one deleted
+    await f.evaluate(i => likuloka.select(i), made.bedroom);
+    const auto = await f.evaluate(([l, z]) => likuloka.furnish(l).filter(p => p.zone === z).length, [made.level, made.bedroom]);
+    const n0 = (await items()).length;
+    await f.click('[data-action="own-furniture"]');
+    await frames(f);
+    its = await items();
+    const after = await f.evaluate(([l, z]) => ({ auto: likuloka.getDoc().nodes[z].auto, left: likuloka.furnish(l).filter(p => p.zone === z).length }), [made.level, made.bedroom]);
+    ok('a room\u2019s furniture becomes items, and the room stops furnishing itself', auto >= 2 && its.length === n0 + auto && after.auto === false && after.left === 0, { auto, n: its.length, after });
+    const bed = its.find(i => /bed/i.test(i.name));
+    await f.evaluate(i => likuloka.select(i), bed.id);
+    await f.keyboard.press('Delete');
+    ok('one of them can be deleted', (await items()).length === n0 + auto - 1 && !(await items()).some(i => i.id === bed.id));
+    await f.keyboard.press('Control+z'); await f.keyboard.press('Control+z');
+    ok('and undo brings the automatic furniture back', (await f.evaluate(z => likuloka.getDoc().nodes[z].auto, made.bedroom)) === true && (await items()).length === n0);
+    await f.evaluate(() => likuloka.setRole({ kind: 'client', fixed: false }));
+    const client = await f.evaluate(([l]) => likuloka.placeAsset(l, 'rug'), [made.level]);
+    ok('a client cannot place items, and sees no asset library', !client && (await f.locator('.assets').count()) === 0);
+    await f.evaluate(() => likuloka.setRole({ kind: 'designer' }));
+    const every = await f.evaluate(l => likuloka.assets().map(k => likuloka.placeAsset(l, k) ? '' : k).filter(Boolean), made.level);
+    await frames(f); await f.waitForTimeout(300); await frames(f);
+    ok('every asset in the library can be placed and drawn', every.length === 0, every);
+    const old = await f.evaluate(z => { const d = JSON.parse(JSON.stringify(likuloka.getDoc())); delete d.nodes[z].auto; return likuloka.load(d) && likuloka.getDoc().nodes[z].auto; }, made.living);
+    ok('a project saved before this opens with its rooms furnished automatically', old === true, old);
+    ok('no page errors with assets', errors.length === 0, errors.slice(0, 5));
+    await c.close();
+  }
+
   // ---- glass and the grid ---------------------------------------------------------------------
   {
     const { page: g, context: c, errors } = await open(browser, url);

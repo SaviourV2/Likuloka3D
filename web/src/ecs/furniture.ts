@@ -13,7 +13,7 @@
 import * as THREE from 'three/webgpu';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { furnishLevel, type FurnitureBox, type FurnitureModel } from '@/scene/furnish';
-import type { Id, SceneDoc } from '@/scene/types';
+import type { Id, ItemNode, SceneDoc } from '@/scene/types';
 import { CUT, UNIT_BOX } from './materials';
 
 export const MODEL_NAMES = [
@@ -47,6 +47,7 @@ class Furniture {
   private flat = new Map<number, THREE.MeshStandardMaterial>();
   private lit = new Map<string, THREE.Material>();
   private glass = new THREE.MeshStandardMaterial({ color: 0xbfe4f2, transparent: true, opacity: 0.3, roughness: 0.05, depthWrite: false });
+  private mark = new THREE.MeshBasicNodeMaterial({ color: '#6fd0ff', toneMapped: false });
   private leaf = new THREE.MeshStandardMaterial({ color: 0x5d8f5c, roughness: 0.9, flatShading: true });
 
   attach(level: Id, group: THREE.Group) { this.groups.set(level, group); this.seen.delete(level); }
@@ -116,6 +117,31 @@ class Furniture {
       if (piece.models && piece.models.every(m => this.lib.has(m.name))) {
         for (const m of piece.models) if (!hidden(m.y0)) { group.add(this.model(m, piece.tint)); count.models++; }
       } else for (const b of piece.boxes) if (!hidden(b.z0)) { group.add(this.box(b)); count.boxes++; }
+    }
+  }
+
+  /**
+   * Builds a placed item into its group: the same boxes or models, in the
+   * item's own frame, with the group carrying its place and turn. A selected
+   * item stands on a lit outline of its footprint.
+   */
+  item(group: THREE.Object3D, it: ItemNode, cut: boolean, selected: boolean) {
+    group.clear();
+    group.position.set(it.at[0], 0, it.at[1]);
+    group.rotation.y = it.turn * Math.PI / 180;
+    const [w, d] = it.size, hidden = (z0: number) => cut && z0 >= CUT - 0.2;
+    if (it.models && it.models.every(m => this.lib.has(m[0]))) {
+      for (const m of it.models) if (!hidden(m[5])) group.add(this.model({ name: m[0], cx: (m[1] + m[2]) / 2 - w / 2, cz: (m[3] + m[4]) / 2 - d / 2, w: m[2] - m[1], d: m[4] - m[3], y0: m[5], h: m[6] - m[5], yaw: m[7] === 'flip' ? Math.PI : 0 }, it.tint));
+    } else for (const p of it.parts) if (!hidden(p[4])) {
+      group.add(this.box({ kind: (p[7] || 'box') as FurnitureBox['kind'], cx: (p[0] + p[1]) / 2 - w / 2, cz: (p[2] + p[3]) / 2 - d / 2, lw: p[1] - p[0], ld: p[3] - p[2], z0: p[4], z1: p[5], yaw: 0, color: p[6], x0: 0, x1: 0, y0: 0, y1: 0 }));
+    }
+    if (selected) {
+      const t = 0.05;
+      for (const [x, z, sx, sz] of [[0, -d / 2 - t, w + 4 * t, t], [0, d / 2 + t, w + 4 * t, t], [-w / 2 - t, 0, t, d + 2 * t], [w / 2 + t, 0, t, d + 2 * t]]) {
+        const edge = new THREE.Mesh(UNIT_BOX, this.mark);
+        edge.position.set(x, 0.02, z); edge.scale.set(sx, 0.02, sz); edge.raycast = () => {};
+        group.add(edge);
+      }
     }
   }
 

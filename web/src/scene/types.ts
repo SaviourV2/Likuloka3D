@@ -15,7 +15,7 @@
 export type Id = string;
 export type Vec2 = readonly [number, number];
 
-export type NodeType = 'building' | 'level' | 'wall' | 'zone' | 'slab' | 'opening';
+export type NodeType = 'building' | 'level' | 'wall' | 'zone' | 'slab' | 'opening' | 'item';
 
 interface Base<T extends NodeType> {
   readonly id: Id;
@@ -61,7 +61,7 @@ export interface WallNode extends Base<'wall'> {
 
 export type RoomType =
   | 'living' | 'kitchen' | 'dining' | 'bedroom' | 'bathroom'
-  | 'office' | 'hallway' | 'laundry' | 'storage' | 'studio' | 'pool';
+  | 'office' | 'hallway' | 'laundry' | 'storage' | 'studio' | 'pool' | 'garage';
 
 /** A floor finish. These are generic finishes drawn by the shader, not products. */
 export type FloorFinish = 'none' | 'oak' | 'walnut' | 'tile-60' | 'tile-60x120' | 'tile-30x60' | 'tile-20' | 'terrazzo' | 'concrete';
@@ -77,6 +77,33 @@ export interface ZoneNode extends Base<'zone'> {
   readonly floor: FloorFinish;
   /** How the room is furnished, where its use offers a choice: a kitchen with an island, a bedroom with a sunken bed. */
   readonly option: ZoneOption;
+  /** Whether the room is furnished automatically from its use. Off once its furniture has been made into items. */
+  readonly auto: boolean;
+}
+
+/** A box of an item: from a0 to a1 across it, d0 to d1 back to front, z0 to z1 up, its colour, and its shape ('box' unless given). */
+export type ItemPart = readonly [number, number, number, number, number, number, number, string?];
+/** A model file of an item: its name, the same six limits, and 'flip' to turn it round. */
+export type ItemModel = readonly [string, number, number, number, number, number, number, string?];
+
+/**
+ * A placed object: a piece of furniture, a stair, a car. It stands on its
+ * level at `at` (its centre, kept to 50 mm) turned by `turn` degrees, and
+ * carries its own shape, so it stays as placed whatever the asset library
+ * becomes: boxes, and model files that replace them when they have loaded.
+ */
+export interface ItemNode extends Base<'item'> {
+  readonly parent: Id;
+  /** The library asset it was made from. */
+  readonly asset: string;
+  readonly at: Vec2;
+  readonly turn: number;
+  /** Width and depth of its footprint. */
+  readonly size: readonly [number, number];
+  readonly parts: readonly ItemPart[];
+  readonly models: readonly ItemModel[] | null;
+  /** The colour of its fabric. */
+  readonly tint: number;
 }
 
 export interface SlabNode extends Base<'slab'> {
@@ -114,7 +141,7 @@ export interface OpeningNode extends Base<'opening'> {
   readonly product: string | null;
 }
 
-export type SceneNode = BuildingNode | LevelNode | WallNode | ZoneNode | SlabNode | OpeningNode;
+export type SceneNode = BuildingNode | LevelNode | WallNode | ZoneNode | SlabNode | OpeningNode | ItemNode;
 export type NodeOf<T extends NodeType> = Extract<SceneNode, { type: T }>;
 
 export interface ProjectSettings {
@@ -177,7 +204,7 @@ export const UNTITLED = 'Untitled project';
 export const MIN_WALL = GRID;
 export const ROOM_TYPES: readonly RoomType[] = [
   'living', 'kitchen', 'dining', 'bedroom', 'bathroom',
-  'office', 'hallway', 'laundry', 'storage', 'studio', 'pool',
+  'office', 'hallway', 'laundry', 'storage', 'studio', 'pool', 'garage',
 ];
 
 /** The choices a room's use offers for how it is furnished. A use not listed here has only 'standard'. */

@@ -189,6 +189,18 @@ function MoveRing({ building }: { building: Id }) {
   );
 }
 
+/** A placed item. The furniture system builds what is inside; React owns the group, which is pressed to select and dragged to move. */
+function Item({ id }: { id: Id }) {
+  const ref = useEntity<THREE.Group>(id, 'item');
+  return (
+    <group ref={ref}
+      onPointerDown={e => startDrag(e, id, 'item', 'Move item', edits.translate(id))}
+      onClick={e => { if (shown(e.object) && e.delta <= 4) clickSelect(id)(e); }}
+      onPointerOver={e => { if (shown(e.object) && editor.getState().tool === 'select') { e.stopPropagation(); cursor('move'); } }}
+      onPointerOut={() => cursor('')} />
+  );
+}
+
 /** The level's furniture: an empty group the furniture system fills. */
 function Furnishings({ level }: { level: Id }) {
   const ref = useRef<THREE.Group>(null);
@@ -210,7 +222,8 @@ function Level({ id }: { id: Id }) {
     <group ref={ref}>
       {kids.map((k, i) => list[i] === 'wall' ? <Wall key={k} id={k} />
         : list[i] === 'zone' ? <Zone key={k} id={k} />
-        : list[i] === 'slab' ? <Slab key={k} id={k} /> : null)}
+        : list[i] === 'slab' ? <Slab key={k} id={k} />
+        : list[i] === 'item' ? <Item key={k} id={k} /> : null)}
       <Furnishings level={id} />
       <Handles level={id} />
       <WallPreview level={id} />

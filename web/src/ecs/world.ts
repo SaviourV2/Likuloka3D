@@ -25,6 +25,7 @@ import { ancestor } from '@/scene/ops';
 import type { BuildingView } from '@/scene/store';
 import type { Id, NodeType, OpeningNode, SceneDoc, SlabNode, Vec2, WallNode, ZoneNode } from '@/scene/types';
 import { CUT, materials, UNIT_BOX } from './materials';
+import { furniture } from './furniture';
 import { archBand, archedPanel, spandrel } from './shapes';
 
 export interface Entity { id: Id; kind: NodeType; object: THREE.Object3D }
@@ -78,6 +79,9 @@ class World {
     this.thickness.delete(id);
   }
 
+  /** Every item is built again: the model files have arrived. */
+  refreshItems() { for (const e of this.entities.values()) if (e.kind === 'item') this.dirty.add(e.id); }
+
   markDirty(ids: Iterable<Id>) {
     for (const id of ids) this.dirty.add(id);
     this.layoutDirty = true;
@@ -91,13 +95,13 @@ class World {
       // Walls and openings are rebuilt with the selection's materials; it is a few matrix uploads.
       for (const id of [this.selected, selection]) {
         const kind = id ? this.entities.get(id)?.kind : undefined;
-        if (id && (kind === 'wall' || kind === 'opening')) this.dirty.add(id);
+        if (id && (kind === 'wall' || kind === 'opening' || kind === 'item')) this.dirty.add(id);
       }
     }
     if (cut !== this.cut) {
       // Which pieces sit wholly above the cut changes, so every wall and opening is rebuilt.
       this.cut = cut;
-      for (const e of this.entities.values()) if (e.kind === 'wall' || e.kind === 'opening') this.dirty.add(e.id);
+      for (const e of this.entities.values()) if (e.kind === 'wall' || e.kind === 'opening' || e.kind === 'item') this.dirty.add(e.id);
     }
     if (this.dirty.size) {
       const work = new Set(this.dirty);
@@ -129,6 +133,8 @@ class World {
           zoneGeometry(entity.object as THREE.Mesh, node);
           paintOutline(entity.object as THREE.Mesh, node, selected);
           this.stats.updates.zone++;
+        } else if (node.type === 'item') {
+          furniture.item(entity.object, node, this.cut, selected);
         } else if (node.type === 'building') {
           entity.object.position.set(node.origin[0], 0, node.origin[1]);
         } else continue;

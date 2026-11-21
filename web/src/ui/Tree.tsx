@@ -4,8 +4,10 @@
  * only its own node's name and whether it is selected, so editing one node
  * re-renders one row.
  */
-import { addLevelAbove } from '@/scene/ops';
-import { commit, select, setView, useEditor } from '@/scene/store';
+import { addLevelAbove, ancestor } from '@/scene/ops';
+import { useState } from 'react';
+import { commit, select, setTool, setView, useEditor } from '@/scene/store';
+import { ASSETS, ASSET_GROUPS, placeAsset, type AssetGroup } from '@/scene/assets';
 import type { Id, LevelMode, SceneNode } from '@/scene/types';
 import { rig } from '@/render/interact';
 
@@ -66,6 +68,7 @@ function Level({ id, building }: { id: Id; building: Id }) {
         </button>
       )} />
       {of('slab').map(s => <Row key={s} id={s} depth={2} />)}
+      <Group label="Items" ids={of('item')} depth={2} />
       <Group label="Zones" ids={of('zone')} depth={2} />
       <Group label="Walls" ids={of('wall')} depth={2} />
     </div>
@@ -97,12 +100,51 @@ function Building({ id }: { id: Id }) {
   );
 }
 
+/**
+ * The asset library: furniture, decor, stairs and cars to place by hand. A
+ * press puts the asset in the middle of the selected room, or of the level
+ * being worked on, and selects it, ready to be dragged and turned.
+ */
+function Assets() {
+  const client = useEditor(s => s.role.kind === 'client');
+  const [group, setGroup] = useState<AssetGroup>('Decor');
+  const where = useEditor(s => {
+    const n = s.selection ? s.doc.nodes[s.selection] : undefined;
+    const level = n?.type === 'level' ? n.id : n && n.type !== 'building' ? ancestor(s.doc, n.id, 'level')?.id : undefined;
+    return `${level ?? s.activeLevel ?? ''}|${n?.type === 'zone' ? n.id : ''}`;
+  });
+  const target = useEditor(s => { const [l, z] = where.split('|'); const zn = s.doc.nodes[z], ln = s.doc.nodes[l]; return zn ? zn.name : ln ? ln.name : ''; });
+  if (client) return null;
+  const [level, zone] = where.split('|');
+  const place = (key: string) => {
+    let made: Id | null = null;
+    const ok = commit(d => { const [next, id] = placeAsset(d, level, key, zone ? { zone } : {}); made = id; return next; }, 'Place item');
+    if (ok && made) { setTool('select'); select(made); }
+    rig.invalidate();
+  };
+  return (
+    <section className="assets" aria-label="Assets">
+      <h2>Assets</h2>
+      <select value={group} aria-label="Asset group" onChange={e => setGroup(e.target.value as AssetGroup)}>
+        {ASSET_GROUPS.map(g => <option key={g} value={g}>{g}</option>)}
+      </select>
+      <div className="asset-list">
+        {ASSETS.filter(a => a.group === group).map(a => (
+          <button key={a.key} type="button" data-asset={a.key} disabled={!level} title={`Place in ${target || 'the level'}`} onClick={() => place(a.key)}>{a.label}</button>
+        ))}
+      </div>
+      <p className="hint">{level ? `Goes in the middle of ${target}. Drag it into place, and turn it in the inspector.` : 'Add a level first.'}</p>
+    </section>
+  );
+}
+
 export default function Tree() {
   const roots = useEditor(s => s.doc.roots);
   return (
     <nav className="tree" aria-label="Scene">
       <h2>Scene</h2>
       {roots.map(id => <Building key={id} id={id} />)}
+      <Assets />
     </nav>
   );
 }

@@ -5,7 +5,7 @@
  */
 import {
   DEFAULT_SETTINGS, FLOOR_KEYS, GRID, optionFor, ZONE_OPTIONS, type ZoneOption, MIN_ARCH_SIDE, SIZE_STEP, MIN_WALL, OPENING_DEFAULTS, OPENING_FINISHES, OPENING_MARGIN, OPENING_SHAPES, ROOM_TYPES, UNTITLED,
-  type BuildingNode, type FloorFinish, type Id, type LevelNode, type NodeOf, type NodeType, type OpeningFinish, type OpeningKind, type OpeningNode,
+  type BuildingNode, type FloorFinish, type Id, type ItemModel, type ItemNode, type ItemPart, type LevelNode, type NodeOf, type NodeType, type OpeningFinish, type OpeningKind, type OpeningNode,
   type OpeningShape, type OpeningState, type ProjectSettings, type RoomType, type WallLayer, type SceneDoc, type SceneNode, type SlabNode, type Vec2, type WallNode, type ZoneNode,
 } from './types';
 
@@ -546,6 +546,7 @@ export function addZone(doc: SceneDoc, levelId: Id, input: ZoneInput, id = newId
     use: input.use ?? 'living',
     floor: floorOf(input.floor) ?? 'none',
     option: optionOf(input.use ?? 'living', input.option) ?? 'standard',
+    auto: true,
   };
   return [attach(doc, node), id];
 }
@@ -597,20 +598,59 @@ export function removePoint(doc: SceneDoc, id: Id, index: number): SceneDoc {
   return setPoints(doc, id, n.points.filter((_, i) => i !== index));
 }
 
+// ---- items ---------------------------------------------------------------------
+
+/** Items are placed in steps of 50 mm, finer than the walls' grid: furniture is not built on it. */
+const ITEM_STEP = 0.05;
+const itemSnap = (v: number) => Math.round(v / ITEM_STEP) * ITEM_STEP;
+const turnOf = (deg: number) => { const t = Math.round(finite(deg, 'turn') * 10) / 10 % 360; return t < 0 ? t + 360 : t; };
+
+export interface ItemInput { asset: string; name?: string; at: Vec2; turn?: number; size: readonly [number, number]; parts: readonly ItemPart[]; models?: readonly ItemModel[] | null; tint?: number }
+
+export function addItem(doc: SceneDoc, levelId: Id, input: ItemInput, id = newId('item')): [SceneDoc, Id] {
+  get(doc, levelId, 'level');
+  if (typeof input.asset !== 'string' || !input.asset) throw new SceneError('An item needs an asset');
+  if (!Array.isArray(input.parts) || !input.parts.length || input.parts.length > 400) throw new SceneError('An item needs between 1 and 400 boxes');
+  for (const p of input.parts) if (!Array.isArray(p) || p.length < 7 || p.slice(0, 7).some(v => typeof v !== 'number' || !Number.isFinite(v))) throw new SceneError('An item has a broken box');
+  for (const m of input.models ?? []) if (!Array.isArray(m) || typeof m[0] !== 'string' || m.slice(1, 7).some(v => typeof v !== 'number' || !Number.isFinite(v))) throw new SceneError('An item has a broken model');
+  const node: ItemNode = {
+    id, type: 'item', parent: levelId,
+    name: input.name?.trim() || 'Item',
+    asset: input.asset,
+    at: [itemSnap(finite(input.at[0], 'at[0]')), itemSnap(finite(input.at[1], 'at[1]'))],
+    turn: turnOf(input.turn ?? 0),
+    size: [positive(input.size[0], 'width', 0.05, 30), positive(input.size[1], 'depth', 0.05, 30)],
+    parts: input.parts, models: input.models?.length ? input.models : null,
+    tint: typeof input.tint === 'number' && Number.isFinite(input.tint) ? input.tint : 0x6f8ba3,
+  };
+  return [attach(doc, node), id];
+}
+
+export function updateItem(doc: SceneDoc, id: Id, patch: { name?: string; at?: Vec2; turn?: number }): SceneDoc {
+  const n = get(doc, id, 'item');
+  const at: Vec2 = patch.at ? [itemSnap(finite(patch.at[0], 'at[0]')), itemSnap(finite(patch.at[1], 'at[1]'))] : n.at;
+  const turn = patch.turn === undefined ? n.turn : turnOf(patch.turn);
+  const name = patch.name?.trim() || n.name;
+  if (samePoint(at, n.at) && turn === n.turn && name === n.name) return doc;
+  return put(doc, { ...n, name, at, turn });
+}
+
 export function translate(doc: SceneDoc, id: Id, d: Vec2): SceneDoc {
+  const it = doc.nodes[id];
+  if (it?.type === 'item') return updateItem(doc, id, { at: [it.at[0] + d[0], it.at[1] + d[1]] });
   const n = poly(doc, id);
   const [dx, dy] = snapPoint(d);
   if (!dx && !dy) return doc;
   return put(doc, { ...n, points: n.points.map(([x, y]) => [x + dx, y + dy] as Vec2) });
 }
 
-export function updateZone(doc: SceneDoc, id: Id, patch: { name?: string; use?: RoomType; floor?: FloorFinish; option?: ZoneOption }): SceneDoc {
+export function updateZone(doc: SceneDoc, id: Id, patch: { name?: string; use?: RoomType; floor?: FloorFinish; option?: ZoneOption; auto?: boolean }): SceneDoc {
   const z = get(doc, id, 'zone');
   if (patch.use !== undefined && !ROOM_TYPES.includes(patch.use)) throw new SceneError(`Unknown use ${patch.use}`);
   const use = patch.use ?? z.use;
   // A use that does not offer the room's option puts it back to standard.
   const option = optionOf(use, patch.option) ?? optionFor(use, z.option);
-  return put(doc, { ...z, name: patch.name?.trim() || z.name, use, floor: floorOf(patch.floor) ?? z.floor, option });
+  return put(doc, { ...z, name: patch.name?.trim() || z.name, use, floor: floorOf(patch.floor) ?? z.floor, option, auto: patch.auto ?? z.auto });
 }
 
 export function updateLevel(doc: SceneDoc, id: Id, patch: { name?: string; elevation?: number; height?: number }): SceneDoc {
@@ -687,7 +727,7 @@ export function migrate(raw: unknown): unknown {
     else if (n?.type === 'opening') {
       const kind = n.kind === 'window' ? 'window' : 'door';
       nodes[id] = { ...n, shape: n.shape ?? 'square', finish: n.finish ?? OPENING_DEFAULTS[kind].finish, state: n.state ?? 'closed', product: n.product ?? null };
-    } else if (n?.type === 'zone') nodes[id] = { ...n, floor: (FLOOR_KEYS as readonly unknown[]).includes(n.floor) ? n.floor : 'none', option: optionFor(n.use as RoomType, n.option) }; // a finish this version does not have falls back too
+    } else if (n?.type === 'zone') nodes[id] = { ...n, floor: (FLOOR_KEYS as readonly unknown[]).includes(n.floor) ? n.floor : 'none', option: optionFor(n.use as RoomType, n.option), auto: n.auto !== false }; // a finish this version does not have falls back too
     else nodes[id] = n;
   }
   const settings = { ...DEFAULT_SETTINGS, ...(typeof (doc as { settings?: unknown }).settings === 'object' ? (doc as { settings: object }).settings : {}) };
@@ -708,7 +748,7 @@ export function validate(doc: unknown): SceneDoc {
     if (!n || n.id !== id || n.parent !== parent || !expect.includes(n.type) || seen.has(id)) throw new SceneError(`Broken node ${id}`);
     seen.add(id);
     if (n.type === 'building') n.children.forEach(c => walk(c, id, ['level']));
-    if (n.type === 'level') n.children.forEach(c => walk(c, id, ['wall', 'zone', 'slab']));
+    if (n.type === 'level') n.children.forEach(c => walk(c, id, ['wall', 'zone', 'slab', 'item']));
     if (n.type === 'wall') {
       if (!Array.isArray(n.children)) throw new SceneError(`Broken node ${id}`);
       n.children.forEach(c => walk(c, id, ['opening']));

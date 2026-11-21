@@ -492,3 +492,15 @@ kbd { background: rgba(111, 208, 255, .1); color: var(--accent); box-shadow: ins
   .bar > button, .menu > summary { padding-left: 7px; padding-right: 7px; }
   .project-name { width: 9ch; }
 }
+
+/* The asset library, under the scene list. */
+.assets { margin-top: 22px; padding-top: 14px; border-top: 1px solid var(--hair); display: grid; gap: 8px; }
+.assets select { background: var(--field); border: 0; border-radius: 9px; padding: 7px 8px; box-shadow: inset 0 0 0 1px var(--hair); }
+.assets select option { background: #0b101b; color: var(--ink); }
+.asset-list { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.asset-list button {
+  border: 0; border-radius: 9px; padding: 8px; min-height: 44px; cursor: pointer; text-align: left; font-size: 12.5px; font-weight: 600; line-height: 1.25;
+  background: var(--field); box-shadow: inset 0 0 0 1px var(--hair); transition: background-color .18s var(--ease), box-shadow .25s var(--ease);
+}
+.asset-list button:hover:not(:disabled) { background: var(--field-strong); box-shadow: var(--accent-glow); color: #fff; }
+.dot-item { background: #c9a77a; border-radius: 2px; }

@@ -51,8 +51,8 @@ function Systems() {
   useFrame((_, dt) => {
     const s = editor.getState();
     world.step(s.doc, s.views, s.selection, s.cut, Math.min(dt, 0.1));
-    // The model files are asked for the first time furniture is shown; the view is drawn again when they are in.
-    if (s.furniture) furniture.load(invalidate);
+    // The model files are asked for once; furniture and items are drawn again when they are in.
+    furniture.load(() => { world.refreshItems(); invalidate(); });
     furniture.step(s.doc, s.furniture, s.cut);
     world.ghost(s.doc, s.views, s.selection);
     let animating = false;

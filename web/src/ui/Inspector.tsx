@@ -1,12 +1,13 @@
 'use client';
 /** Properties of the selected node. Each field commits one undo step when it changes. */
 import { useEffect, useState } from 'react';
-import { addZone, area, centreOnPlot, plotAround, removePlotCorner, rename, setPlot, updateSettings, setWallLength, updateLevel, updateOpening, updateSlab, updateWall, updateZone } from '@/scene/ops';
+import { addZone, area, updateItem, centreOnPlot, plotAround, removePlotCorner, rename, setPlot, updateSettings, setWallLength, updateLevel, updateOpening, updateSlab, updateWall, updateZone } from '@/scene/ops';
 import { commit, isClient, patchUnderlay, removeSelected, scaleUnderlay, setInteraction, setUnderlay, useEditor } from '@/scene/store';
 import { fromDxf, importDxf, parseDxf, PLOT_LAYER, ROOM_LAYER, type DxfChoice, type DxfDrawing, type DxfUnit } from '@/scene/dxfin';
 import { FLOOR_FINISHES, FLOOR_KEYS, ZONE_OPTIONS, type ZoneOption, type FloorFinish, FINISH_LABELS, frameSize, OPENING_FINISHES, ROOM_TYPES, type OpeningFinish, type OpeningNode, type RoomType, type SceneDoc, type SceneNode, type Vec2, type WallNode } from '@/scene/types';
 import { applyProduct, applyWallType, formatPrice, productFor, wallTypeFor } from '@/scene/catalogue';
 import { checks } from '@/scene/checks';
+import { ownFurniture } from '@/scene/assets';
 import { FINISH_SWATCH, USE_COLOURS } from '@/ecs/materials';
 
 /** A row of mutually exclusive choices that each commit one undo step. */
@@ -108,6 +109,7 @@ function Selected({ node, error }: { node: SceneNode; error: string | null }) {
   const client = useEditor(isClient);
   // In the client view only doors, windows and rooms can be changed; the rest is shown, disabled.
   const locked = client && node.type !== 'opening' && node.type !== 'zone';
+  // an item is the designer's to move, like a wall
   const id = node.id;
   return (
     <aside className="inspector" aria-label="Inspector" data-type={node.type} data-locked={locked}>
@@ -163,6 +165,30 @@ function Selected({ node, error }: { node: SceneNode; error: string | null }) {
             </label>
           )}
           <RoomSize points={node.points} />
+          {!client && node.use !== 'pool' && (
+            <>
+              <label className="check"><input type="checkbox" checked={node.auto} data-action="zone-auto" onChange={e => edit(d => updateZone(d, id, { auto: e.target.checked }), e.target.checked ? 'Furnish automatically' : 'Stop furnishing')} /> Furnish this room automatically</label>
+              {node.auto && <button type="button" className="add" data-action="own-furniture" title="Each piece becomes an item you can move, turn or delete. The room is no longer furnished automatically." onClick={() => edit(d => ownFurniture(d, id)[0], 'Make furniture editable')}>Make its furniture editable</button>}
+              <p className="hint">Add more from Assets on the left: it goes into this room.</p>
+            </>
+          )}
+        </div>
+      )}
+      {node.type === 'item' && (
+        <div className="fields">
+          <div className="field wide">
+            <span>Turn</span>
+            <div className="segmented" role="group" aria-label="Turn">
+              <button type="button" data-turn="-15" title="15° anticlockwise" onClick={() => edit(d => updateItem(d, id, { turn: node.turn + 15 }), 'Turn item')}>↺ 15°</button>
+              <button type="button" data-turn="90" title="A quarter turn" onClick={() => edit(d => updateItem(d, id, { turn: node.turn - 90 }), 'Turn item')}>90°</button>
+              <button type="button" data-turn="15" title="15° clockwise" onClick={() => edit(d => updateItem(d, id, { turn: node.turn - 15 }), 'Turn item')}>↻ 15°</button>
+            </div>
+          </div>
+          <dl className="measures" aria-label="Measurements">
+            <dt>Size</dt><dd data-measure="item">{mm(node.size[0])} × {mm(node.size[1])} mm</dd>
+            <dt>Turned</dt><dd data-measure="turn">{node.turn}°</dd>
+          </dl>
+          <p className="figure">Drag it in the view to move it, in steps of 50 mm.</p>
         </div>
       )}
       {node.type === 'opening' && (

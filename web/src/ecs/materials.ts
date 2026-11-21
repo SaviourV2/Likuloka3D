@@ -75,7 +75,7 @@ function partMaterial(c: string, opts: { roughness?: number; metalness?: number;
 const USE: Record<RoomType, string> = {
   living: '#ffb547', kitchen: '#ff7a59', dining: '#ffd166', bedroom: '#8c7bff',
   bathroom: '#38e1ff', office: '#5cf2a0', hallway: '#7f95bd', laundry: '#4fb8ff',
-  storage: '#c9a77a', studio: '#ff6bd6', pool: '#19b5e6',
+  storage: '#c9a77a', studio: '#ff6bd6', pool: '#19b5e6', garage: '#9aa7b8',
 };
 
 const zones = new Map<string, THREE.MeshBasicNodeMaterial>();

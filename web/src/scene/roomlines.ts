@@ -31,7 +31,7 @@ export interface RoomlinesPlan {
 
 /** Room names to uses, in English and Indonesian. The first match wins, so the narrower names come first. */
 const GUESS: [RegExp, RoomType][] = [
-  [/pool|kolam/i, 'pool'], [/kitchen|dapur|pantry kering/i, 'kitchen'], [/dining|makan/i, 'dining'],
+  [/pool|kolam/i, 'pool'], [/garage|garasi|carport/i, 'garage'], [/kitchen|dapur|pantry kering/i, 'kitchen'], [/dining|makan/i, 'dining'],
   [/bath|wc|toilet|shower|ensuite|mandi|\bkm\b/i, 'bathroom'], [/bed|master|guest|tidur|kamar/i, 'bedroom'],
   [/office|study|kerja/i, 'office'],
   [/hall|entry|corridor|foyer|teras|selasar|koridor/i, 'hallway'], [/laundry|utility|cuci/i, 'laundry'],
@@ -172,8 +172,8 @@ function outlineOfShapes(rooms: Room[]): Vec2[] {
  * kitchen and dining rooms (drawn here as an open door), a front door on the
  * entry room's longest outside wall, and windows on outside walls by room use.
  */
-const CIRC: Record<RoomType, number> = { hallway: 0, living: 1, studio: 1, dining: 2, kitchen: 3, office: 5, bedroom: 6, laundry: 7, storage: 8, bathroom: 9, pool: 10 };
-const WINDOWS: Record<RoomType, number> = { living: 2, studio: 2, kitchen: 1, dining: 1, bedroom: 1, bathroom: 1, office: 1, laundry: 1, hallway: 0, storage: 0, pool: 0 };
+const CIRC: Record<RoomType, number> = { hallway: 0, living: 1, studio: 1, dining: 2, kitchen: 3, office: 5, bedroom: 6, laundry: 7, storage: 8, bathroom: 9, pool: 10, garage: 4 };
+const WINDOWS: Record<RoomType, number> = { living: 2, studio: 2, kitchen: 1, dining: 1, bedroom: 1, bathroom: 1, office: 1, laundry: 1, hallway: 0, storage: 0, pool: 0, garage: 0 };
 export interface PlannedOpening { kind: 'door' | 'window'; at: Vec2; width: number; height: number; sill: number; open?: boolean }
 export function openingsOf(rooms: Room[]): PlannedOpening[] {
   const uses = rooms.map(useOf), areaOf = (i: number) => Math.abs(signed(cornersOf(rooms[i])));

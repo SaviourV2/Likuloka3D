@@ -16,21 +16,24 @@
  * A room is measured to the inside faces of its walls: each edge of the zone
  * is moved in by half the thickness of the wall on it.
  */
-import type { Id, OpeningNode, RoomType, SceneDoc, WallNode, ZoneNode, ZoneOption } from './types';
+import type { Id, ItemNode, OpeningNode, RoomType, SceneDoc, WallNode, ZoneNode, ZoneOption } from './types';
 
 type Pt = [number, number];
 /** A box of a piece: from a0 to a1 along the wall, d0 to d1 out from it, z0 to z1 up, its colour and its shape. */
-type Part = [number, number, number, number, number, number, number, string?];
+export type Part = [number, number, number, number, number, number, number, string?];
 /** A model of a piece: its file name, then the same six limits, and 'flip' to face the wall. */
-type Model = [string, number, number, number, number, number, number, string?];
-interface Item { w: number; dep: number; parts: Part[]; models?: Model[]; tall?: boolean; soft?: boolean; tag?: string }
+export type Model = [string, number, number, number, number, number, number, string?];
+export interface Item { w: number; dep: number; parts: Part[]; models?: Model[]; tall?: boolean; soft?: boolean; tag?: string; /** What the piece is called once it is an item of its own. */ label?: string }
 
 export interface FurnitureBox { kind: 'box' | 'cyl' | 'ball' | 'glass'; cx: number; cz: number; lw: number; ld: number; z0: number; z1: number; yaw: number; color: number; x0: number; x1: number; y0: number; y1: number }
 export interface FurnitureModel { name: string; cx: number; cz: number; w: number; d: number; y0: number; h: number; yaw: number }
 /** One piece of furniture: its boxes and, when it has them, the models that replace the boxes. */
-export interface FurniturePiece { zone: Id; boxes: FurnitureBox[]; models: FurnitureModel[] | null; tint: number; /** What the piece is, for the pieces a room's option asks for: 'island', 'sunken-bed'. */ tag?: string }
+export interface FurniturePiece { zone: Id; boxes: FurnitureBox[]; models: FurnitureModel[] | null; tint: number;
+  /** The piece in its own frame: its centre, its turn in degrees, and its boxes and models as the recipe gave them. */
+  local: { at: [number, number]; turn: number; size: [number, number]; parts: Part[]; models: Model[] | null; label: string };
+  /** What the piece is, for the pieces a room's option asks for: 'island', 'sunken-bed'. */ tag?: string }
 
-interface Quad { pts: Pt[]; flat: boolean; x0: number; x1: number; y0: number; y1: number }
+export interface Quad { pts: Pt[]; flat: boolean; x0: number; x1: number; y0: number; y1: number }
 interface Frame { side: string; len: number; depth: number; u: Pt; n: Pt; yaw: number; at: (a: number, d: number) => Pt }
 interface Info { side: string; fr: Frame; len: number; depth: number; doors: number; windows: number; score?: number }
 interface Room { x: number; y: number; w: number; h: number; points?: Pt[] }
@@ -83,9 +86,9 @@ function hit(A: Quad, B: Quad) { // do two such areas overlap by more than a hai
   return true;
 }
 
-const C = { wood: 0xb58d62, dark: 0x6a5242, white: 0xf3f1ec, steel: 0xb7bfc7, black: 0x22272c, stone: 0xe4e1da, cab: 0x7f8f8a, ward: 0xd9d2c4, green: 0x5d8f5c, pot: 0x8b8f95, rug: 0xcdbfa8 };
+export const C = { wood: 0xb58d62, dark: 0x6a5242, white: 0xf3f1ec, steel: 0xb7bfc7, black: 0x22272c, stone: 0xe4e1da, cab: 0x7f8f8a, ward: 0xd9d2c4, green: 0x5d8f5c, pot: 0x8b8f95, rug: 0xcdbfa8 };
 const SOFT = [0x6f8ba3, 0xb9805f, 0x86a184, 0xa48db5];
-const lighten = (c: number, k: number) => { const r = c >> 16 & 255, g = c >> 8 & 255, b = c & 255, m = (v: number) => Math.round(v + (255 - v) * k); return m(r) << 16 | m(g) << 8 | m(b); };
+export const lighten = (c: number, k: number) => { const r = c >> 16 & 255, g = c >> 8 & 255, b = c & 255, m = (v: number) => Math.round(v + (255 - v) * k); return m(r) << 16 | m(g) << 8 | m(b); };
 
 // The floor area a piece covers, measured from one wall of the room: a0..a1 along the wall, d0..d1 out from it.
 const area = (fr: Frame, a0: number, a1: number, d0: number, d1: number) => quadOf([fr.at(a0, d0), fr.at(a1, d0), fr.at(a1, d1), fr.at(a0, d1)]);
@@ -117,7 +120,9 @@ function put(ctx: Ctx, fr: Frame, a: number, d: number, item: Item): boolean {
     const c = fr.at(a + (m[1] + m[2]) / 2, d + (m[3] + m[4]) / 2);
     return { name: m[0], cx: c[0], cz: c[1], w: m[2] - m[1], d: m[4] - m[3], y0: m[5], h: m[6] - m[5], yaw: fr.yaw + (m[7] === 'flip' ? Math.PI : 0) };
   }) : null;
-  ctx.pieces.push({ zone: ctx.zone, boxes, models, tint: ctx.soft, ...(item.tag ? { tag: item.tag } : {}) });
+  const label = item.label ?? (item.soft ? 'Rug' : item.models?.[0] ? item.models[0][0].replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase().replace(/^./, c => c.toUpperCase()) : 'Furniture');
+  const local = { at: fr.at(a + item.w / 2, d + item.dep / 2), turn: Math.round(fr.yaw * 1800 / Math.PI) / 10, size: [item.w, item.dep] as [number, number], parts: item.parts, models: item.models ?? null, label };
+  ctx.pieces.push({ zone: ctx.zone, boxes, models, tint: ctx.soft, local, ...(item.tag ? { tag: item.tag } : {}) });
   return true;
 }
 type Where = 'center' | 'start' | 'end';
@@ -138,7 +143,7 @@ function free(ctx: Ctx, item: Item): boolean {
 }
 const solid: Score = i => -i.doors * 10 - i.windows * 3 + i.len * 0.1;
 
-const bedItem = (bw: number, ns: boolean, col: number): Item => {
+export const bedItem = (bw: number, ns: boolean, col: number): Item => {
   const o = ns ? 0.5 : 0, P: Part[] = [[o, o + bw, 0, 0.08, 0, 0.95, C.wood], [o, o + bw, 0.08, 2.05, 0.08, 0.3, C.dark], [o + 0.03, o + bw - 0.03, 0.1, 2.03, 0.3, 0.5, C.white], [o, o + bw, 0.8, 2.05, 0.5, 0.55, col]];
   const n = bw > 1.2 ? 2 : 1;
   for (let i = 0; i < n; i++) { const c = o + bw * (i + 0.5) / n; P.push([c - 0.3, c + 0.3, 0.16, 0.56, 0.5, 0.6, 0xffffff]); }
@@ -147,24 +152,24 @@ const bedItem = (bw: number, ns: boolean, col: number): Item => {
   if (ns) for (const a0 of [0.03, o + bw + 0.03]) M.push(['cabinetBed', a0, a0 + 0.44, 0, 0.4, 0, 0.48], ['lampRoundTable', a0 + 0.11, a0 + 0.33, 0.09, 0.31, 0.48, 0.9]);
   return { w: bw + 2 * o, dep: 2.05, parts: P, models: M };
 };
-const sofaItem = (w: number, col: number): Item => {
+export const sofaItem = (w: number, col: number): Item => {
   const P: Part[] = [[0, w, 0.04, 0.92, 0.08, 0.42, col], [0, w, 0.04, 0.26, 0.42, 0.82, col], [0, 0.16, 0.04, 0.92, 0.42, 0.6, col], [w - 0.16, w, 0.04, 0.92, 0.42, 0.6, col]];
   const n = Math.max(2, Math.round((w - 0.32) / 0.75)), cw = (w - 0.36) / n;
   for (let i = 0; i < n; i++) P.push([0.18 + i * cw + 0.01, 0.18 + (i + 1) * cw - 0.01, 0.28, 0.9, 0.42, 0.5, lighten(col, 0.18)]);
   return { w, dep: 0.92, parts: P, models: [['loungeSofa', 0, w, 0.04, 0.92, 0, 0.86]] };
 };
-const shelfItem = (w: number): Item => {
+export const shelfItem = (w: number): Item => {
   const P: Part[] = [[0, w, 0, 0.03, 0, 1.95, C.wood], [0, 0.03, 0, 0.32, 0, 1.95, C.wood], [w - 0.03, w, 0, 0.32, 0, 1.95, C.wood]];
   [0.02, 0.4, 0.78, 1.16, 1.54, 1.92].forEach((y, i) => { P.push([0.03, w - 0.03, 0.03, 0.32, y, y + 0.03, C.wood]); if (i < 5) P.push([0.07, 0.07 + (w - 0.2) * (0.5 + 0.1 * ((i * 3) % 5)), 0.08, 0.28, y + 0.03, y + 0.29, SOFT[i % 4]]); });
   return { w, dep: 0.32, tall: true, parts: P, models: [['bookcaseOpen', 0, w, 0, 0.32, 0, 1.95]] };
 };
-const plantItem = (): Item => ({ w: 0.5, dep: 0.5, parts: [[0.1, 0.4, 0.1, 0.4, 0, 0.36, C.pot, 'cyl'], [0.02, 0.48, 0.02, 0.48, 0.36, 1.05, C.green, 'ball']], models: [['pottedPlant', 0.1, 0.4, 0.1, 0.4, 0, 1.05]] });
+export const plantItem = (): Item => ({ w: 0.5, dep: 0.5, parts: [[0.1, 0.4, 0.1, 0.4, 0, 0.36, C.pot, 'cyl'], [0.02, 0.48, 0.02, 0.48, 0.36, 1.05, C.green, 'ball']], models: [['pottedPlant', 0.1, 0.4, 0.1, 0.4, 0, 1.05]] });
 const chair = (P: Part[], c: number, d0: number, backAtStart: boolean) => {
   P.push([c - 0.21, c + 0.21, d0, d0 + 0.42, 0.41, 0.45, C.dark]);
   const b = backAtStart ? d0 : d0 + 0.38; P.push([c - 0.21, c + 0.21, b, b + 0.04, 0.45, 0.88, C.dark]);
   for (const [la, ld] of [[c - 0.2, d0 + 0.01], [c + 0.165, d0 + 0.01], [c - 0.2, d0 + 0.375], [c + 0.165, d0 + 0.375]]) P.push([la, la + 0.035, ld, ld + 0.035, 0, 0.41, C.dark]);
 };
-const tableSet = (tw: number, td: number): Item => {
+export const tableSet = (tw: number, td: number): Item => {
   const P: Part[] = [[0.05, 0.05 + tw, 0.5, 0.5 + td, 0.71, 0.75, C.wood]], dep = td + 1.0;
   for (const [la, ld] of [[0.1, 0.55], [tw - 0.06, 0.55], [0.1, 0.39 + td], [tw - 0.06, 0.39 + td]]) P.push([la, la + 0.06, ld, ld + 0.06, 0, 0.71, C.wood]);
   const n = tw >= 1.5 ? 2 : 1, M: Model[] = [['table', 0.05, 0.05 + tw, 0.5, 0.5 + td, 0, 0.76]];
@@ -174,7 +179,7 @@ const tableSet = (tw: number, td: number): Item => {
   }
   return { w: tw + 0.1, dep, parts: P, models: M };
 };
-const kitchenRun = (L: number, uppers: boolean): Item => {
+export const kitchenRun = (L: number, uppers: boolean): Item => {
   const P: Part[] = [[0, 0.66, 0.02, 0.68, 0, 1.9, C.steel], [0.68, L, 0.06, 0.56, 0, 0.1, C.dark], [0.68, L, 0.02, 0.6, 0.1, 0.86, C.cab], [0.68, L, 0, 0.63, 0.86, 0.9, C.stone]];
   const run = L - 0.68;
   if (run >= 1.5) { const h = 0.68 + run * 0.66 - 0.3, s = 0.68 + run * 0.22 - 0.25; P.push([h, h + 0.6, 0.08, 0.56, 0.9, 0.908, C.black], [s, s + 0.5, 0.12, 0.5, 0.9, 0.906, 0x99a3ac]); }
@@ -190,12 +195,19 @@ const kitchenRun = (L: number, uppers: boolean): Item => {
   return { w: L, dep: 0.68, parts: P, models: M };
 };
 
+/** A car, as boxes: 1.8 m wide and 4.4 m long, its nose at the far end. */
+export const carItem = (col = 0x3d6fa8): Item => ({ w: 1.8, dep: 4.4, label: 'Car', parts: [
+  [0, 1.8, 0, 4.4, 0.28, 0.82, col], [0.12, 1.68, 0.9, 3.1, 0.82, 1.38, 0x1e2a36], [0.16, 1.64, 0.86, 3.14, 1.38, 1.42, col],
+  [-0.02, 0.2, 0.55, 1.2, 0, 0.62, 0x15181c], [1.6, 1.82, 0.55, 1.2, 0, 0.62, 0x15181c], [-0.02, 0.2, 3.1, 3.75, 0, 0.62, 0x15181c], [1.6, 1.82, 3.1, 3.75, 0, 0.62, 0x15181c],
+  [0.15, 0.55, 4.38, 4.42, 0.5, 0.68, 0xf4f1c9], [1.25, 1.65, 4.38, 4.42, 0.5, 0.68, 0xf4f1c9],
+] });
+
 /**
  * A sunken bed: a low mattress set down into a timber deck that runs round it,
  * with a headboard at the wall. The floor itself is not cut; the deck is what
  * the mattress sits below.
  */
-const sunkenBedItem = (bw: number, col: number): Item => {
+export const sunkenBedItem = (bw: number, col: number): Item => {
   const rim = 0.35, W = bw + 2 * rim, D = 2.05 + rim, top = 0.3;
   const P: Part[] = [
     [0, W, 0, 0.08, 0, 0.8, C.wood],                         // headboard
@@ -209,11 +221,11 @@ const sunkenBedItem = (bw: number, col: number): Item => {
   return { w: W, dep: D, parts: P, tag: 'sunken-bed' };
 };
 /** A kitchen island: cabinets under a stone top that overhangs on the far side, where the stools go. */
-const islandItem = (w: number): Item => {
+export const islandItem = (w: number): Item => {
   const P: Part[] = [[0.02, w - 0.02, 0.04, 0.62, 0, 0.1, C.dark], [0, w, 0, 0.66, 0.1, 0.86, C.cab], [0, w, 0, 0.95, 0.86, 0.9, C.stone]];
   return { w, dep: 0.95, parts: P, tag: 'island' };
 };
-const stoolsItem = (w: number): Item => {
+export const stoolsItem = (w: number): Item => {
   const P: Part[] = [], n = Math.max(2, Math.floor(w / 0.6));
   for (let i = 0; i < n; i++) { const c = w * (i + 0.5) / n; P.push([c - 0.17, c + 0.17, 0.02, 0.36, 0.6, 0.65, C.wood, 'cyl'], [c - 0.03, c + 0.03, 0.16, 0.22, 0, 0.6, C.dark, 'cyl']); }
   return { w, dep: 0.4, parts: P };
@@ -231,6 +243,12 @@ function island(ctx: Ctx, run: Info | null): boolean {
 }
 
 const RECIPES: Partial<Record<RoomType, (ctx: Ctx) => void>> = {
+  /** A garage: a car, nose in from the longest wall, and shelves where they fit. */
+  garage(ctx: Ctx) {
+    const order = sides(ctx, i => -i.doors * 10 + (i.depth >= 5 ? 5 : 0) - i.len * 0.1);
+    for (const s of order) if (s.depth >= 4.8 && along(ctx, s, carItem(), ['center', 'start', 'end'], 0.3) !== null) break;
+    anySide(ctx, shelfItem(1.2), i => -i.doors * 6 - i.windows * 5, ['start', 'end']);
+  },
   /** A pool: a stone coping along every side and steps in. The water is the zone's own surface. */
   pool(ctx: Ctx) {
     for (const fr of ctx.frames) if (fr.len > 0.6) put(ctx, fr, 0.05, 0, { w: fr.len - 0.1, dep: 0.3, soft: true, parts: [[0, fr.len - 0.1, 0, 0.3, 0, 0.05, C.stone]] });
@@ -358,6 +376,13 @@ function roomOf(z: ZoneNode, walls: WallNode[]): Room | null {
   return box ? { x, y, w, h } : { x, y, w, h, points: P };
 }
 
+/** The floor an item covers. */
+export function itemQuad(it: { at: readonly [number, number]; turn: number; size: readonly [number, number] }): Quad {
+  const y = it.turn * Math.PI / 180, u: Pt = [Math.cos(y), -Math.sin(y)], n: Pt = [-u[1], u[0]], hw = it.size[0] / 2, hd = it.size[1] / 2;
+  const P = (a: number, d: number): Pt => [it.at[0] + u[0] * a + n[0] * d, it.at[1] + u[1] * a + n[1] * d];
+  return quadOf([P(-hw, -hd), P(hw, -hd), P(hw, hd), P(-hw, hd)]);
+}
+
 /** The furniture of one level, in the level's plan coordinates. The same scene always gives the same pieces. */
 export function furnishLevel(doc: SceneDoc, levelId: Id): FurniturePiece[] {
   const level = doc.nodes[levelId];
@@ -374,10 +399,12 @@ export function furnishLevel(doc: SceneDoc, levelId: Id): FurniturePiece[] {
       (o.kind === 'window' ? winZones : zones).push(quadOf([at(a, -d), at(b, -d), at(b, d), at(a, d)]));
     }
   }
+  // what has been placed by hand is stood clear of, like any other piece
+  const items = kids.filter((n): n is ItemNode => n?.type === 'item').map(itemQuad);
   const pieces: FurniturePiece[] = [];
   kids.filter((n): n is ZoneNode => n?.type === 'zone').forEach((z, i) => {
-    const recipe = RECIPES[z.use], r = recipe && roomOf(z, walls);
-    if (recipe && r) recipe({ r, frames: edgesOf(r), zones, winZones, placed: [], pieces, soft: SOFT[i % SOFT.length], zone: z.id, option: z.option });
+    const recipe = z.auto ? RECIPES[z.use] : undefined, r = recipe && roomOf(z, walls);
+    if (recipe && r) recipe({ r, frames: edgesOf(r), zones, winZones, placed: [...items], pieces, soft: SOFT[i % SOFT.length], zone: z.id, option: z.option });
   });
   return pieces;
 }
