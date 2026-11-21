@@ -127,6 +127,10 @@ Without the function deployed, designers save as before, and a client's save exp
 
 Data: `projects/{id}` holds `name`, `ownerUid`, `members` (uid to role), `memberUids`, `memberNames`, `scene` (the scene as JSON), `sceneVersion`, `updatedAt` and `updatedBy`; `projects/{id}/versions/{id}` holds `number`, `createdAt`, `author`, `authorUid`, `note`, `scene` and `approval`; `invites/{token}` holds `projectId`, `role`, `createdBy`, `createdAt` and `projectName`.
 
+## Website
+
+Every push to `main` that touches `web/` builds the static site and publishes it on GitHub Pages (`.github/workflows/pages.yml`), at `https://saviourv2.github.io/Likuloka3D/`. Pages serves it under the repository's name, so the workflow passes that path to the build as `PAGES_BASE_PATH`; everything the page fetches (`catalogue.json`, `cloud.json`, `models/`) is asked for relative to the page. Cloud features stay off there, because no `cloud.json` is published.
+
 ## Design
 
 The night edition: black, with the cobalt of likuloka.com carried into light blue (`--accent` `#6fd0ff`, `--accent-2` `#2f6bff`), Archivo for text and JetBrains Mono for figures. The page background is black with slowly drifting cobalt and light-blue glows and a faint blueprint grid; the panels are translucent over it. What floats above the 3D view is glass: the bar, its menu, the labels and the dialogs blur and tint the view behind them, with a lit top edge. With reduced transparency all of it is solid. In the 3D view, a gradient night sky is drawn by the GPU, with fog into the distance, the grid everything snaps to (a line every 0.25 m, brighter every 1 m and 5 m), a light-blue rim light and vivid room colours on dark floors. The selection glows with a slow light-blue pulse computed in the shader.
