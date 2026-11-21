@@ -27,7 +27,7 @@ npm run build
 ## What you can do
 
 - **Hierarchy.** Each building has levels; each level has a slab, zones (rooms) and walls; each wall has its doors and windows. The scene list on the left shows the tree, and clicking a row selects that node.
-- **Stack, explode, solo.** Each building has its own switch. Stack draws levels at their elevations. Explode pulls them 2.75 m apart so every floor can be seen and edited. Solo shows one level; pick which with its Show button.
+- **Stack, explode, side, solo.** Each building has its own switch. Stack draws levels at their elevations; while something on a lower level is selected, the levels above it fade to a faint shell and let the pointer through, so the floor below can be seen and edited without leaving the stack. Explode lifts them 4.5 m apart, enough to reach under each floor. Side lays the levels next to each other on the ground. Solo shows one level alone.
 - **Move buildings.** Select a building, one of its levels or a floor slab, and a light-blue ring appears on the ground in the middle of the building. Drag the ring to move the whole building, on the grid. It is one undo step, and nothing inside the building changes. Clients cannot move buildings.
 - **Drag walls.** Drag a wall to slide it sideways. Walls joined to its ends stretch to follow. Select a wall to get a ball on each end; drag a ball to move that end.
 - **Floor finishes.** A room shows the colour of its use until it is given a floor: oak or walnut planks, four tile sizes, terrazzo or polished concrete. The shader draws the joints at true size from world coordinates, so tiles line up across rooms. These are generic finishes, not products. A client may choose them.

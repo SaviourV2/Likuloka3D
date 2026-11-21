@@ -72,7 +72,7 @@ function Level({ id, building }: { id: Id; building: Id }) {
   );
 }
 
-const MODES: [LevelMode, string][] = [['stack', 'Stack'], ['explode', 'Explode'], ['solo', 'Solo']];
+const MODES: [LevelMode, string][] = [['stack', 'Stack'], ['explode', 'Explode'], ['side', 'Side'], ['solo', 'Solo']];
 
 function Building({ id }: { id: Id }) {
   const levels = useEditor(kids(id));

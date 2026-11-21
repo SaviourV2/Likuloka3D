@@ -140,7 +140,8 @@ export interface SceneDoc {
 }
 
 /** How a building shows its levels. Not part of the document, so not undone. */
-export type LevelMode = 'stack' | 'explode' | 'solo';
+/** `side` lays the levels out next to each other on the ground, so every floor can be reached at once. */
+export type LevelMode = 'stack' | 'explode' | 'solo' | 'side';
 
 export const GRID = 0.25;
 /** Door and window sizes are ordered in millimetres; they are kept to 5 mm. */

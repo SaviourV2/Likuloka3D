@@ -54,8 +54,9 @@ function Systems() {
     // The model files are asked for the first time furniture is shown; the view is drawn again when they are in.
     if (s.furniture) furniture.load(invalidate);
     furniture.step(s.doc, s.furniture, s.cut);
+    world.ghost(s.doc, s.views, s.selection);
     let animating = false;
-    for (const l of world.levels.values()) if (l.y !== l.target) { animating = true; break; }
+    for (const l of world.levels.values()) if (l.y !== l.target || l.x !== l.tx) { animating = true; break; }
     // A selection glows from the shader's clock, so it needs frames while selected.
     const pulsing = !world.reducedMotion && !!s.selection;
     // Orbit and zoom ease to a stop: keep drawing while they do.

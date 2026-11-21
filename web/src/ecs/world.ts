@@ -37,13 +37,22 @@ export interface Stats {
   last: { frame: number; ids: Id[] };
 }
 
-export const EXPLODE_GAP = 2.75;
+/** How far apart exploded levels are lifted: a storey and a half, so the floor below can be reached under the one above. */
+export const EXPLODE_GAP = 4.5;
+/** The gap between levels laid side by side. */
+export const SIDE_GAP = 3;
+
+/** What a level above the one being worked on is drawn with: a faint shell that lets the floor below show and be reached. */
+const GHOST = new THREE.MeshBasicNodeMaterial({ color: '#8fd4ff', transparent: true, opacity: 0.1, depthWrite: false, toneMapped: false });
+const noRaycast = () => {};
 
 class World {
   readonly entities = new Map<Id, Entity>();
   readonly dirty = new Set<Id>();
   /** Where each level is drawn now, and where it is heading. */
-  readonly levels = new Map<Id, { y: number; target: number; visible: boolean }>();
+  readonly levels = new Map<Id, { y: number; target: number; visible: boolean; x: number; tx: number }>();
+  /** Levels drawn as ghosts: those above the level of the selection, in a stacked building. */
+  private ghosts = new Set<Id>();
   selected: Id | null = null;
   reducedMotion = false;
   stats: Stats = { frames: 0, updates: { wall: 0, opening: 0, zone: 0, slab: 0, layout: 0, selection: 0 }, last: { frame: 0, ids: [] } };
@@ -143,7 +152,7 @@ class World {
   /** Eases each level toward its place for the building's mode. Returns whether anything moved. */
   private layout(doc: SceneDoc, views: Record<Id, BuildingView>, dt: number): boolean {
     let moving = this.layoutDirty;
-    if (!moving) for (const l of this.levels.values()) if (Math.abs(l.y - l.target) > 1e-4) { moving = true; break; }
+    if (!moving) for (const l of this.levels.values()) if (Math.abs(l.y - l.target) > 1e-4 || Math.abs(l.x - l.tx) > 1e-4) { moving = true; break; }
     if (!moving) return false;
     this.layoutDirty = false;
     for (const b of doc.roots) {
@@ -151,17 +160,29 @@ class World {
       if (building?.type !== 'building') continue;
       const view = views[b] ?? { mode: 'stack', solo: null };
       const levels = building.children.map(c => doc.nodes[c]).filter(n => n?.type === 'level').sort((p, q) => p!.elevation - q!.elevation);
+      // side by side: each level one building's width, and a gap, further along x
+      let width = 0;
+      if (view.mode === 'side') {
+        let lo = Infinity, hi = -Infinity;
+        for (const l of levels) if (l?.type === 'level') for (const c of l.children) {
+          const n = doc.nodes[c];
+          for (const p of n?.type === 'wall' ? [n.a, n.b] : n?.type === 'zone' || n?.type === 'slab' ? n.points : []) { if (p[0] < lo) lo = p[0]; if (p[0] > hi) hi = p[0]; }
+        }
+        width = hi > lo ? hi - lo : 0;
+      }
       levels.forEach((level, i) => {
         if (!level || level.type !== 'level') return;
-        const target = level.elevation + (view.mode === 'explode' ? i * EXPLODE_GAP : 0);
+        const target = view.mode === 'side' ? 0 : level.elevation + (view.mode === 'explode' ? i * EXPLODE_GAP : 0);
+        const tx = view.mode === 'side' ? i * (width + SIDE_GAP) : 0;
         const visible = view.mode !== 'solo' || view.solo === level.id;
         const cur = this.levels.get(level.id);
         const k = this.reducedMotion || !cur ? 1 : 1 - Math.exp(-dt * 12);
         const y = cur ? cur.y + (target - cur.y) * k : target;
         const done = Math.abs(target - y) < 1e-3 ? target : y;
-        this.levels.set(level.id, { y: done, target, visible });
+        const x0 = cur ? cur.x + (tx - cur.x) * k : tx, x = Math.abs(tx - x0) < 1e-3 ? tx : x0;
+        this.levels.set(level.id, { y: done, target, visible, x, tx });
         const obj = this.entities.get(level.id)?.object;
-        if (obj) { obj.position.y = done; obj.visible = visible; }
+        if (obj) { obj.position.y = done; obj.position.x = x; obj.visible = visible; }
       });
     }
     return true;
@@ -171,13 +192,44 @@ class World {
   toWorld(doc: SceneDoc, levelId: Id, p: Vec2, lift = 0): THREE.Vector3 {
     const building = ancestor(doc, levelId, 'building');
     const y = this.levels.get(levelId)?.y ?? (doc.nodes[levelId]?.type === 'level' ? (doc.nodes[levelId] as { elevation: number }).elevation : 0);
-    return new THREE.Vector3(p[0] + (building?.origin[0] ?? 0), y + lift, p[1] + (building?.origin[1] ?? 0));
+    return new THREE.Vector3(p[0] + (building?.origin[0] ?? 0) + (this.levels.get(levelId)?.x ?? 0), y + lift, p[1] + (building?.origin[1] ?? 0));
   }
 
   /** The plan point under a world position on a level's floor plane. */
   toPlan(doc: SceneDoc, levelId: Id, v: THREE.Vector3): Vec2 {
     const building = ancestor(doc, levelId, 'building');
-    return [v.x - (building?.origin[0] ?? 0), v.z - (building?.origin[1] ?? 0)];
+    return [v.x - (building?.origin[0] ?? 0) - (this.levels.get(levelId)?.x ?? 0), v.z - (building?.origin[1] ?? 0)];
+  }
+
+  /**
+   * Fades the levels above the one the selection is on, in a stacked building,
+   * and lets the pointer through them, so the floor below can be seen and
+   * edited. Called after every system has run, because the systems put the
+   * real materials back on what they rebuild. Returns whether anything is faded.
+   */
+  ghost(doc: SceneDoc, views: Record<Id, BuildingView>, selection: Id | null): boolean {
+    const want = new Set<Id>();
+    const at = selection ? (doc.nodes[selection]?.type === 'level' ? doc.nodes[selection] : ancestor(doc, selection, 'level')) : undefined;
+    const building = at ? doc.nodes[at.parent!] : undefined;
+    if (at?.type === 'level' && building?.type === 'building' && (views[building.id]?.mode ?? 'stack') === 'stack') {
+      for (const l of building.children) { const n = doc.nodes[l]; if (n?.type === 'level' && n.elevation > at.elevation + 1e-6) want.add(l); }
+    }
+    for (const id of new Set([...want, ...this.ghosts])) {
+      const on = want.has(id);
+      this.entities.get(id)?.object.traverse(o => {
+        const m = o as THREE.Mesh;
+        if (!m.isMesh && !(o as THREE.LineSegments).isLineSegments) return;
+        if (on) {
+          if (m.material !== GHOST) { m.userData.solid = m.material; m.material = GHOST; m.raycast = noRaycast; m.castShadow = false; }
+        } else if (m.userData.solid) {
+          // a system may have put a new material on already; only a ghost is put back
+          if (m.material === GHOST) m.material = m.userData.solid;
+          delete m.userData.solid; delete (m as { raycast?: unknown }).raycast; m.castShadow = true;
+        }
+      });
+    }
+    this.ghosts = want;
+    return want.size > 0;
   }
 
   levelY(levelId: Id): number { return this.levels.get(levelId)?.y ?? 0; }

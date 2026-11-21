@@ -273,7 +273,7 @@ async function drag(page, level, grab, by, lift = 0) {
     await page.evaluate(i => likuloka.setView(i, { mode: 'explode' }), id.house);
     await frames(page);
     let up = await page.evaluate(i => likuloka.levelY(i), id.upper);
-    ok('explode lifts the upper level away', Math.abs(up.y - (3 + 2.75)) < 1e-6 && up.visible, up);
+    ok('explode lifts the upper level away', Math.abs(up.y - (3 + 4.5)) < 1e-6 && up.visible, up);
     await page.locator('.building').first().locator('[data-mode="solo"]').click();
     await frames(page);
     const ground = await page.evaluate(i => likuloka.levelY(i), id.ground);
@@ -1043,6 +1043,35 @@ async function drag(page, level, grab, by, lift = 0) {
     const moved = await f.evaluate(i => likuloka.getDoc().nodes[i].offset, door.id);
     ok('typing the distance to the wall end slides a door there', Math.abs(door.len - moved - door.width / 2 - 6) < 0.006, { door, moved });
     ok('no page errors while tracing', errors.length === 0, errors.slice(0, 5));
+    await c.close();
+  }
+
+  // ---- reaching the floor below ---------------------------------------------------------------
+  {
+    const { page: f, context: c, errors } = await open(browser, url);
+    const id = await ids(f);
+    const upper = await f.evaluate(() => { const d = likuloka.getDoc(), b = d.nodes[d.roots[0]]; const ls = b.children.map(k => d.nodes[k]).sort((p, q) => p.elevation - q.elevation); return { ground: ls[0].id, up: ls[1].id, building: b.id, groundWall: ls[0].children.map(k => d.nodes[k]).find(n => n.type === 'wall').id }; });
+    const ghosted = l => f.evaluate(i => { let g = 0, n = 0; likuloka.world.entities.get(i).object.traverse(o => { if (o.isMesh) { n++; if (o.material.opacity < 0.2 && o.material.transparent) g++; } }); return { g, n }; }, l);
+    ok('with nothing selected every level is solid', (await ghosted(upper.up)).g === 0);
+    await f.evaluate(i => likuloka.select(i), upper.groundWall);
+    await frames(f);
+    const g1 = await ghosted(upper.up), g0 = await ghosted(upper.ground);
+    ok('selecting something on the ground floor fades the level above it', g1.n > 10 && g1.g === g1.n && g0.g === 0, { g1, g0 });
+    // a click that would have hit the upper floor now reaches the ground floor's zone under it
+    const hit = await f.evaluate(([l]) => { const d = likuloka.getDoc(), z = d.nodes[l].children.map(k => d.nodes[k]).find(n => n.type === 'zone'); const cx = z.points.reduce((s, p) => s + p[0], 0) / z.points.length, cy = z.points.reduce((s, p) => s + p[1], 0) / z.points.length; return { zone: z.id, at: likuloka.project(l, cx, cy, 0.012) }; }, [upper.ground]);
+    await f.mouse.click(hit.at.x, hit.at.y);
+    await frames(f);
+    ok('and a click goes through it to the room below', (await state(f)).selection === hit.zone, (await state(f)).selection);
+    await f.evaluate(i => likuloka.select(i), upper.up);
+    await frames(f);
+    ok('selecting the upper level makes it solid again', (await ghosted(upper.up)).g === 0);
+    await f.evaluate(b => likuloka.setView(b, { mode: 'side' }), upper.building);
+    await frames(f); await f.waitForTimeout(200); await frames(f);
+    const side = await f.evaluate(([g, u]) => [likuloka.world.levels.get(g), likuloka.world.levels.get(u)], [upper.ground, upper.up]);
+    ok('Side lays the levels next to each other on the ground', side[0].y === 0 && side[1].y === 0 && side[0].x === 0 && side[1].x > 10, side);
+    const far = await f.evaluate(u => { const p = likuloka.project(u, 1, 1, 0), q = likuloka.project(u, 2, 1, 0); return Math.hypot(q.x - p.x, q.y - p.y) > 2; }, upper.up);
+    ok('and the moved level still maps to the screen', far);
+    ok('no page errors reaching the floor below', errors.length === 0, errors.slice(0, 5));
     await c.close();
   }
 
