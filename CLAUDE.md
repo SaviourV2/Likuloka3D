@@ -23,4 +23,6 @@ Roomlines, a floor plan editor with a 3D view. `README.md` documents the plan fo
 - Nothing floating may cover a room, a handle or the uploaded drawing. The tests check this at 1400×900 and 400×800.
 - Animate discrete changes only, and never during a drag. Use `morph()` only for layout changes (view mode, panel): the browser drops clicks while a view transition runs, so content changes such as loading a plan animate with CSS instead. Everything must still work with reduced motion, where changes apply at once.
 - Visibility is the `hidden` attribute. Animate how something enters; never hide it with opacity alone, because the tests and assistive tools read `hidden`.
-- All lengths are metres on a 0.25 m grid. `x` runs left to right and `y` top to bottom.
+- All lengths are metres. `x` runs left to right and `y` top to bottom. Rectangles stay on the 0.25 m grid; the corners of a shaped room may sit anywhere, rounded to the millimetre.
+- Geometry works on edges, never on north/south/east/west. Use `outline(r)`, `edgesOf(r)` and `onWall(piece, t)`; do not read a wall's direction from a room's `x, y, w, h`, which is only a bounding box once the room has `points`.
+- The four built-in layouts must keep producing the same walls, openings and furniture. When changing `analyze`, `put` or a recipe on purpose, say so in the commit.

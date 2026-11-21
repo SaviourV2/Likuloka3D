@@ -11,6 +11,7 @@ const SCRIPTS = [
   ['xstate.umd.min.js', lib('xstate/dist/xstate.umd.min.js')],
   ['three.min.js', lib('three/build/three.min.js')],
   ['GLTFLoader.js', lib('three/examples/js/loaders/GLTFLoader.js')],
+  ['GLTFExporter.js', lib('three/examples/js/exporters/GLTFExporter.js')],
   ['pdf.min.js', lib('pdfjs-dist/build/pdf.min.js')],
   ['pdf.worker.min.js', lib('pdfjs-dist/build/pdf.worker.min.js')],
 ];
@@ -301,6 +302,65 @@ function fakeClaude() {
     const { page, errors, close } = await open({ block: ['GLTFLoader'] });
     await until(page, 'models', 'none');
     check('without the model loader the page still works', (await page.evaluate(() => window.__roomlines.view.stats())).boxes > 40 && errors.length === 0, errors);
+    await close();
+  }
+
+  // ---------- 4d. shaped rooms, the plot, undo, and exports
+  {
+    const { page, errors, close } = await open();
+    await until(page, 'models', 'ready');
+    const walls = () => page.evaluate(() => { const R = window.__roomlines, an = R.analyze(R.state.plan), ops = an.pieces.flatMap(q => q.openings.map(o => o.kind)); return { pieces: an.pieces.length, shared: an.pieces.filter(q => !q.ext).length, doors: ops.filter(k => k === 'door' || k === 'open').length, entry: ops.filter(k => k === 'entry').length, slanted: an.pieces.filter(q => Math.abs(q.u[0]) > 0.01 && Math.abs(q.u[1]) > 0.01).length }; });
+    const before = await walls();
+    // turn the whole home 20 degrees: every wall is slanted, and nothing else may change
+    const turned = await page.evaluate(() => { const R = window.roomlines, c = [5, 3.875], a = 20 * Math.PI / 180; const rooms = R.getPlan().rooms.map(r => ({ name: r.name, type: r.type, points: [[r.x, r.y], [r.x + r.w, r.y], [r.x + r.w, r.y + r.h], [r.x, r.y + r.h]].map(q => [c[0] + (q[0] - c[0]) * Math.cos(a) - (q[1] - c[1]) * Math.sin(a), c[1] + (q[0] - c[0]) * Math.sin(a) + (q[1] - c[1]) * Math.cos(a)]) })); return R.loadPlan({ name: 'Turned', rooms }).rooms.map(r => ({ pts: (r.points || []).length, area: r.area })); });
+    const after = await walls(); await page.waitForTimeout(300);
+    const st = await page.evaluate(() => { const R = window.__roomlines, f = R.furnish(R.state.plan, R.state.an); return { s: R.view.stats(), sets: f.filter(q => q.kind === 'set').length }; });
+    check('a home turned 20° keeps its rooms, shared walls, doors and front door', turned.every(r => r.pts === 4) && after.pieces === before.pieces && after.shared === before.shared && after.doors === before.doors && after.entry === 1 && after.slanted === after.pieces, [before, after]);
+    check('turned rooms keep their areas and are still furnished', Math.abs(turned.reduce((t, r) => t + r.area, 0) - 77.5) < 0.05 && st.sets >= 14 && st.s.models > 30, [turned.map(r => r.area), st]);
+    const inside = await page.evaluate(() => { const R = window.__roomlines, pip = (P, x, y) => { let c = false; for (let i = 0, j = P.length - 1; i < P.length; j = i++) if ((P[i][1] > y) !== (P[j][1] > y) && x < (P[j][0] - P[i][0]) * (y - P[i][1]) / (P[j][1] - P[i][1]) + P[i][0]) c = !c; return c; }; const rooms = R.state.plan.rooms.map(R.outline); return R.furnish(R.state.plan, R.state.an).filter(q => q.kind === 'set').every(q => rooms.some(P => pip(P, q.cx, q.cz))); });
+    check('every piece in a turned home stands inside a room', inside);
+
+    await page.evaluate(() => window.roomlines.loadPlan({ name: 'L', rooms: [{ name: 'Living room', type: 'living', points: [[0, 0], [6, 0], [6, 3], [3.5, 3], [3.5, 5], [0, 5]] }, { name: 'Bedroom', type: 'bedroom', points: [[3.5, 3], [6, 3], [7.5, 5], [3.5, 5]] }] }));
+    const L = await page.evaluate(() => { const R = window.roomlines.getPlan().rooms; return R.map(r => `${r.name} ${r.x},${r.y} ${r.w}x${r.h} ${r.area} pts${(r.points || []).length}`); });
+    const Lw = await walls();
+    check('an L-shaped room and a room with a slanted wall share walls and get a door', L[0] === 'Living room 0,0 6x5 25 pts6' && L[1] === 'Bedroom 3.5,3 4x2 6.5 pts4' && Lw.shared === 2 && Lw.doors >= 1 && Lw.entry === 1, [L, Lw]);
+
+    await page.click('[data-preset="2"]'); await page.waitForTimeout(400);
+    const box = await page.locator('[data-room]').nth(5).boundingBox(); await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+    await page.click('#edTurnR');
+    const t1 = await page.evaluate(() => window.roomlines.getPlan().rooms[5]);
+    check('the turn button turns the selected room and keeps its area', (t1.points || []).length === 4 && Math.abs(t1.area - 8.94) < 0.02 && await page.locator('#edSquare').isVisible(), t1);
+    await page.click('#undoBtn');
+    check('Undo puts the room back as a rectangle', await page.evaluate(() => { const r = window.roomlines.getPlan().rooms[5]; return !r.points && r.w === 3.25 && r.h === 2.75; }) && await page.locator('#redoBtn').isEnabled());
+    await page.click('#redoBtn');
+    check('Redo turns it again', await page.evaluate(() => !!window.roomlines.getPlan().rooms[5].points));
+    await page.click('#undoBtn');
+    const b2 = await page.locator('[data-room]').nth(5).boundingBox(); await page.mouse.click(b2.x + b2.width / 2, b2.y + b2.height / 2);
+    await page.click('#edFree');
+    const v = await page.locator('[data-room-vertex="2"]').boundingBox(), ppm = b2.width / 3.25;
+    await page.mouse.move(v.x + v.width / 2, v.y + v.height / 2); await page.mouse.down(); await page.mouse.move(v.x + v.width / 2 + ppm * 1.0, v.y + v.height / 2 + ppm * 0.5, { steps: 6 });
+    const during = (await machines(page)).tool; await page.mouse.up();
+    const shaped = await page.evaluate(() => window.roomlines.getPlan().rooms[5]);
+    check('dragging a corner reshapes the room, as its own tool state', during === 'shaping' && (await machines(page)).tool === 'idle' && JSON.stringify(shaped.points[2]) === '[11,8.25]' && shaped.w === 4.25, [during, shaped.points]);
+    const m = await page.locator('[data-room-edge="0"]').boundingBox(); await page.mouse.click(m.x + m.width / 2, m.y + m.height / 2);
+    check('the mark on a side adds a corner', await page.evaluate(() => window.roomlines.getPlan().rooms[5].points.length) === 5);
+    const v2 = await page.locator('[data-room-vertex="1"]').boundingBox();
+    await page.mouse.move(v2.x + v2.width / 2, v2.y + v2.height / 2); await page.mouse.down(); await page.mouse.move(v2.x + 80, v2.y - 60, { steps: 4 }); await page.keyboard.press('Escape'); await page.mouse.up();
+    check('Escape cancels a corner drag', await page.evaluate(() => window.roomlines.getPlan().rooms[5].points.length) === 5 && (await machines(page)).tool === 'idle' && JSON.stringify(await page.evaluate(() => window.roomlines.getPlan().rooms[5].points[1])) === '[8.375,5]', await page.evaluate(() => window.roomlines.getPlan().rooms[5].points));
+
+    await page.click('[data-preset="2"]'); await page.waitForTimeout(300);
+    await page.click('#plotAdd');
+    check('Add a plot puts one 3 m round the home and shows its corners', JSON.stringify(await page.evaluate(() => window.roomlines.getPlan().plot)) === '[[-3,-3],[13,-3],[13,10.75],[-3,10.75]]' && await page.locator('[data-plot-vertex]').count() === 4 && await page.locator('#plotTools').isVisible());
+    const plotTrim = await page.evaluate(() => { const R = window.roomlines; R.setPlot([[-1, -1], [12, 1], [11, 9], [-2, 8]]); const a = R.alignToPlot(), turnedAll = R.getPlan().rooms.every(r => r.points), t = R.trimToPlot(1.5), rooms = R.getPlan().rooms; const P = [[-1, -1], [12, 1], [11, 9], [-2, 8]]; const insideAll = rooms.every(r => (r.points || []).every(q => { for (let i = 0; i < 4; i++) { const p = P[i], c = P[(i + 1) % 4], l = Math.hypot(c[0] - p[0], c[1] - p[1]); if (((q[0] - p[0]) * -(c[1] - p[1]) + (q[1] - p[1]) * (c[0] - p[0])) / l < 1.5 - 0.01) return false; } return true; })); return { a, turnedAll, t, n: rooms.length, insideAll, bad: R.trimToPlot(1.5) && (R.setPlot([[0, 0], [10, 0], [5, 2], [10, 8], [0, 8]]), R.trimToPlot(1).why) }; });
+    check('the home can be aligned to a slanted plot and trimmed to follow its boundary', plotTrim.a && plotTrim.turnedAll && plotTrim.t.ok && plotTrim.t.cut > 0 && plotTrim.insideAll && plotTrim.n >= 4, plotTrim);
+    check('trimming refuses a plot with an inward corner, with a reason', plotTrim.bad === 'not convex', plotTrim.bad);
+    const wAfter = await walls();
+    check('a trimmed home still has doors to every room and one front door', wAfter.entry === 1 && wAfter.doors >= plotTrim.n - 1, wAfter);
+
+    const files = await page.evaluate(async () => { const R = window.roomlines, dxf = R.toDXF(), glb = await R.toGLB(); const head = new Uint8Array(glb.slice(0, 4)); return { dxfOk: dxf.startsWith('0\nSECTION') && dxf.trim().endsWith('EOF') && /\nWALLS\n/.test(dxf) && /\nDOORS\n/.test(dxf) && /\nPLOT\n/.test(dxf) && /\nNAMES\n/.test(dxf), lines: (dxf.match(/\nLINE\n/g) || []).length, glb: String.fromCharCode(...head), bytes: glb.byteLength }; });
+    check('the plan exports as DXF with layers and as a GLB model', files.dxfOk && files.lines > 40 && files.glb === 'glTF' && files.bytes > 50000, files);
+    const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 8000 }).catch(() => null), page.evaluate(() => { document.querySelector('#dataBox').open = true; document.querySelector('#saveDxf').click(); })]);
+    check('Save .dxf downloads a file outside Claude', !!dl && /\.dxf$/.test(dl.suggestedFilename()) && errors.length === 0, [dl && dl.suggestedFilename(), errors]);
     await close();
   }
 

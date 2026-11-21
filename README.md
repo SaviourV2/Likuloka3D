@@ -18,6 +18,13 @@ A floor plan editor that runs in one HTML page. You draw rooms as rectangles on 
 - Furniture is placed by room use: a bed and wardrobe in a bedroom, a counter run and table in a kitchen, and so on. Pieces keep clear of doors, and tall pieces keep clear of windows.
 - The 3D view orbits with a drag, zooms with the wheel or a pinch, and pans with a right-drag or two fingers. Clicking a floor selects that room.
 
+## Shapes, the plot and exports
+
+- **Shapes.** In the room editor, the turn buttons rotate a room by 15°, and "Edit corners" lets you drag each corner and add one with the mark at the middle of a side. A dragged corner lands on a nearby corner or wall of another room, otherwise on the 0.25 m grid. "Make rectangle" goes back to the bounding box.
+- **Plot.** "Add a plot" draws one 3 m round the home; its corners drag the same way. "Align home to plot" turns the home to run along the plot's longest side and centres it. "Trim rooms to plot" cuts every room back to the boundary less the distance you set, so the home follows the line of the land. Trimming needs a plot with no inward corners.
+- **Undo and redo.** The buttons, or Ctrl+Z and Ctrl+Shift+Z, step through the last 60 changes.
+- **Exports.** Under "Plan data": the plan as `.json`, a `.dxf` drawing with walls, doors, windows, room outlines, names and the plot on separate layers, and the 3D model as `.glb`.
+
 ## Furniture models
 
 Furniture is drawn from 34 GLB model files in `models/`: beds, sofas, tables, chairs, kitchen units, bathroom fittings and so on. They come from the [Furniture Kit by Kenney](https://kenney.nl/assets/furniture-kit), which is released under Creative Commons Zero (CC0), so they can be used and shipped freely. `models/LICENSE.txt` is the kit's own licence file.
@@ -69,6 +76,14 @@ The "Plan data" box reads and writes this JSON. All numbers are metres, `x` runs
 ```
 
 `type` is one of `living`, `kitchen`, `dining`, `bedroom`, `bathroom`, `office`, `hallway`, `laundry`, `storage` or `studio`. When it is missing, the page guesses from the room name.
+
+A room that is not a rectangle also has `points`: its corners as `[x, y]` pairs in order round the room. `x`, `y`, `w` and `h` are then its bounding box, and moving or resizing the box moves or stretches the corners with it. Walls can run at any angle; two rooms share a wall when an edge of each lies on the same line.
+
+```json
+{ "name": "Bedroom", "type": "bedroom", "points": [[3.5, 3], [6, 3], [7.5, 5], [3.5, 5]] }
+```
+
+The plan's optional `plot` is the boundary of the land, as a list of corners in the same form.
 
 A room can also carry its finishes. Each field is optional; without it the room uses the default for its type.
 
@@ -129,7 +144,7 @@ Four flows in the page have more than two steps. Each one is an [XState](https:/
 
 | Machine | States | What it controls |
 |---|---|---|
-| `tool` | `idle`, `moving`, `resizing`, `scaling.first`, `scaling.second`, `scaling.distance` | What the pointer does on the 2D plan: dragging a room, dragging a corner, or the two clicks and the distance of "Set scale". Escape cancels any of them. |
+| `tool` | `idle`, `moving`, `resizing`, `shaping`, `scaling.first`, `scaling.second`, `scaling.distance` | What the pointer does on the 2D plan: dragging a room, dragging a corner, or the two clicks and the distance of "Set scale". Escape cancels any of them. |
 | `drawing` | `empty`, `opening`, `ready`, `turning` | The uploaded image or PDF. A newer file or page turn replaces one that is still loading, so results cannot arrive out of order. |
 | `describe` | `unavailable`, `idle`, `working.thinking`, `working.writing`, `blocked` | The "Draw it with Claude" request. |
 | `read` | the same states as `describe` | The "Read it with Claude" request. It stops if the drawing changes while Claude is reading it. |
@@ -178,6 +193,13 @@ const id = roomlines.addRoom({ name: 'Office', type: 'office', x: 5, y: 0, w: 3,
 roomlines.updateRoom(id, { w: 4 })       // values snap to the 0.25 m grid
 roomlines.updateRoom(id, { floor: 'walnut', paint: '#3d4a5c', tile: 'subway', tileTo: 1.2 })
 roomlines.finishes()                     // [{ id, label, wall }]; null resets a finish to its default
+roomlines.updateRoom(id, { rotate: 15 }) // degrees about the room's middle
+roomlines.updateRoom(id, { points: [[0, 0], [4, 0], [5, 3], [0, 3]] })   // null goes back to a rectangle
+roomlines.addCorner(id, 0)               // a new corner in the middle of side 0; id null means the plot
+roomlines.setPlot([[0, 0], [15, 2], [14, 20], [-1, 18]])   // null removes it
+roomlines.alignToPlot(); roomlines.trimToPlot(1.5)          // { ok, cut, removed } or { ok: false, why }
+roomlines.undo(); roomlines.redo()
+roomlines.toDXF(); await roomlines.toGLB()                  // text, and an ArrayBuffer
 roomlines.removeRoom(id)
 roomlines.select(id)
 roomlines.setView({ mode: '3d', furniture: false, cut: true, panel: 'closed' })
@@ -202,4 +224,4 @@ Run `./build.sh` first if `app.html` changed, because the tests load `index.html
 
 ## Limits
 
-Rooms are rectangles, there is one storey, and doors, windows and furniture are placed automatically and cannot be moved by hand.
+There is one storey and no roof. Doors, windows and furniture are placed automatically and cannot be moved by hand. Walls are straight; there are no curves. Claude's "describe" and "read" answers still come back as rectangles, which you can then turn and reshape.

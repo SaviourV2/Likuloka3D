@@ -138,6 +138,7 @@ body { background: var(--paper); color: var(--ink); font-family: var(--font-body
 .btn.primary { background: var(--accent); color: var(--accent-ink); }
 .btn.primary:hover { background: var(--accent); filter: brightness(1.08); }
 .btn.danger { color: var(--crit); }
+.btn[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
 .btn:disabled { opacity: .5; cursor: default; transform: none; }
 .btn.glass, .btn.glass:hover { border: 1px solid transparent; background: linear-gradient(var(--glass), var(--glass)) padding-box, linear-gradient(135deg, var(--rim-hi), var(--rim-lo) 36%, var(--rim-lo) 64%, var(--rim-hi)) border-box; }
 button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -318,12 +319,21 @@ body[data-panel="open"] .panes.mode-plan .zoom { right: calc(var(--panel-w) + 40
         <ul class="rooms" id="roomList"></ul>
         <div class="row">
           <button type="button" class="btn" id="addRoom">Add room</button>
+          <button type="button" class="btn" id="undoBtn" disabled>Undo</button>
+          <button type="button" class="btn" id="redoBtn" disabled>Redo</button>
         </div>
         <div class="editor" id="editor" hidden>
           <div class="field wide"><label for="edName">Name</label><input id="edName" type="text" maxlength="40" autocomplete="off"></div>
           <div class="field wide"><label for="edType">Use</label><select id="edType"></select></div>
           <div class="field"><label for="edW">Width (m)</label><input id="edW" type="number" min="1" max="40" step="0.25" inputmode="decimal"></div>
           <div class="field"><label for="edH">Depth (m)</label><input id="edH" type="number" min="1" max="40" step="0.25" inputmode="decimal"></div>
+          <div class="field wide"><span class="lbl" id="edShapeLbl">Shape</span>
+            <div class="row" role="group" aria-labelledby="edShapeLbl">
+              <button type="button" class="btn" id="edTurnL" aria-label="Turn 15 degrees left">↺ 15°</button>
+              <button type="button" class="btn" id="edTurnR" aria-label="Turn 15 degrees right">↻ 15°</button>
+              <button type="button" class="btn" id="edFree">Edit corners</button>
+              <button type="button" class="btn" id="edSquare" hidden>Make rectangle</button>
+            </div></div>
           <div class="field wide"><label for="edFloor">Floor</label><select id="edFloor"></select></div>
           <div class="field wide"><span class="lbl" id="edPaintLbl">Wall paint</span>
             <div class="swatches" id="edPaints" role="group" aria-labelledby="edPaintLbl"></div></div>
@@ -335,6 +345,23 @@ body[data-panel="open"] .panes.mode-plan .zoom { right: calc(var(--panel-w) + 40
         <p>Drag a room on the plan to move it and drag a corner to resize. Rooms that share an edge get a door between them.</p>
       </section>
 
+      <section class="card" id="plotCard">
+        <h2>Plot</h2>
+        <div class="row">
+          <button type="button" class="btn" id="plotAdd">Add a plot</button>
+          <button type="button" class="btn" id="plotEdit" aria-pressed="false" hidden>Edit corners</button>
+          <button type="button" class="btn danger" id="plotRemove" hidden>Remove plot</button>
+        </div>
+        <div class="stack" id="plotTools" hidden>
+          <div class="row">
+            <button type="button" class="btn" id="plotAlign">Align home to plot</button>
+            <button type="button" class="btn" id="plotTrim">Trim rooms to plot</button>
+          </div>
+          <div class="field"><label for="plotSetback">Distance kept from the boundary (m)</label><input id="plotSetback" type="number" min="0" max="10" step="0.25" value="1.5" inputmode="decimal"></div>
+        </div>
+        <div class="status" id="plotStatus" role="status"></div>
+      </section>
+
       <section class="card">
         <details id="dataBox">
           <summary>Plan data</summary>
@@ -344,6 +371,12 @@ body[data-panel="open"] .panes.mode-plan .zoom { right: calc(var(--panel-w) + 40
             <div class="row">
               <button type="button" class="btn" id="jsonCopy">Copy</button>
               <button type="button" class="btn" id="jsonLoad">Load this plan</button>
+            </div>
+            <p>Take the plan into other tools: DXF opens in AutoCAD and most CAD programs, GLB in SketchUp, Blender and 3D viewers.</p>
+            <div class="row">
+              <button type="button" class="btn" id="saveJson">Save .json</button>
+              <button type="button" class="btn" id="saveDxf">Save .dxf</button>
+              <button type="button" class="btn" id="saveGlb">Save .glb</button>
             </div>
             <div class="status" id="jsonStatus" role="status"></div>
           </div>
@@ -357,6 +390,7 @@ body[data-panel="open"] .panes.mode-plan .zoom { right: calc(var(--panel-w) + 40
 <script>window.XState || document.write('<script src="https://unpkg.com/xstate@5.33.3/dist/xstate.umd.min.js"><\/script>');</script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/exporters/GLTFExporter.js"></script>
 <script src="models.js"></script>
 <script>
 (() => {
@@ -915,14 +949,29 @@ function morph(fn) {
   fn();
 }
 window.addEventListener('pointerdown', () => { if (morphing) morphing.skipTransition(); }, true);
+// Undo and redo step through copies of the plan taken after each finished change.
+const past = [], future = [];
+function remember() { // a restored plan equals the newest copy, so stepping back and forth records nothing new
+  const now = JSON.stringify({ name: state.plan.name, rooms: state.plan.rooms, plot: state.plan.plot || null });
+  if (past[past.length - 1] === now) return;
+  past.push(now); if (past.length > 60) past.shift(); future.length = 0; syncHistory();
+}
+function syncHistory() { $('#undoBtn').disabled = past.length < 2; $('#redoBtn').disabled = !future.length; }
+function step(back) {
+  if (back ? past.length < 2 : !future.length) return false;
+  if (back) future.push(past.pop()); else past.push(future.pop());
+  const p = JSON.parse(past[past.length - 1]);
+  state.plan = p; if (!roomById(state.sel)) state.sel = null; $('#planName').value = p.name; changed();
+  syncHistory(); return true;
+}
 let pending3d = false;
 function changed(light) {
   state.an = analyze(state.plan);
-  render2D(); renderList(); syncEditor();
+  render2D(); renderList(); syncEditor(); syncPlot();
   const area = state.plan.rooms.reduce((s, r) => s + roomArea(r), 0), b = bounds(state.plan);
   $('#stats').textContent = `${state.plan.rooms.length} rooms · ${area.toFixed(1)} m² · ${b.w.toFixed(2)} × ${b.h.toFixed(2)} m`;
   if (document.activeElement !== $('#jsonBox')) $('#jsonBox').value = JSON.stringify(exportPlan(state.plan), null, 1);
-  if (!light) { store.set(exportPlan(state.plan)); notify(); }
+  if (!light) { store.set(exportPlan(state.plan)); remember(); notify(); }
   if (!pending3d) { pending3d = true; requestAnimationFrame(() => { pending3d = false; view.build(); }); }
 }
 function select(id) { state.sel = id && roomById(id) ? id : null; render2D(); renderList(); syncEditor(true); view.build(); notify(); }
@@ -978,6 +1027,48 @@ function addCorner(id, index) {
   P.splice(index + 1, 0, [r3((a[0] + b[0]) / 2), r3((a[1] + b[1]) / 2)]);
   if (r) r.points = P; else state.plan.plot = P; // the new corner sits on the old side until it is dragged
   changed(); return true;
+}
+const convex = P => { let sign = 0; for (let i = 0; i < P.length; i++) { const a = P[i], b = P[(i + 1) % P.length], c = P[(i + 2) % P.length], k = (b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0]); if (Math.abs(k) < 1e-9) continue; if (sign && Math.sign(k) !== sign) return false; sign = Math.sign(k); } return true; };
+// Sets, replaces or removes the plot. Corners are metres, in order round the boundary.
+function setPlot(P) {
+  if (P === null) { state.plan.plot = null; state.editPlot = false; changed(); return true; }
+  const c = cleanPoints(P); if (!c) return false;
+  if (signedArea(c) < 0) c.reverse();
+  state.plan.plot = c; changed(); return true;
+}
+// Turns and moves the whole home so it runs along the plot's longest side and sits in the middle of the plot.
+function alignToPlot() {
+  const P = state.plan.plot; if (!P) return false;
+  let best = 0, bl = 0; P.forEach((q, i) => { const c = P[(i + 1) % P.length], l = Math.hypot(c[0] - q[0], c[1] - q[1]); if (l > bl) { bl = l; best = i; } });
+  const a = P[best], b = P[(best + 1) % P.length];
+  let deg = Math.atan2(b[1] - a[1], b[0] - a[0]) * 180 / Math.PI; deg = ((deg + 45) % 90 + 90) % 90 - 45; // the smallest turn that lines the home up
+  const bb = bounds(state.plan), hc = [(bb.x0 + bb.x1) / 2, (bb.y0 + bb.y1) / 2], pc = centroid(P), rad = deg * Math.PI / 180, cs = Math.cos(rad), sn = Math.sin(rad);
+  for (const r of state.plan.rooms) setOutline(r, outline(r).map(q => [pc[0] + (q[0] - hc[0]) * cs - (q[1] - hc[1]) * sn, pc[1] + (q[0] - hc[0]) * sn + (q[1] - hc[1]) * cs]));
+  changed(); return true;
+}
+// Cuts every room back to the plot's boundary less a setback, so the home follows the line of the land. Needs a plot with no inward corners.
+function trimToPlot(setback = 1.5) {
+  const P = state.plan.plot; if (!P) return { ok: false, why: 'no plot' };
+  if (!convex(P)) return { ok: false, why: 'not convex' };
+  const d = clamp(num(setback, 1.5), 0, 10), n = P.length;
+  // each side of the plot as a line moved inward by the setback: a point on it and the direction pointing in
+  const lines = P.map((q, i) => { const c = P[(i + 1) % n], l = Math.hypot(c[0] - q[0], c[1] - q[1]) || 1, nx = -(c[1] - q[1]) / l, ny = (c[0] - q[0]) / l; return { x: q[0] + nx * d, y: q[1] + ny * d, nx, ny }; });
+  let removed = 0, cut = 0;
+  const kept = [];
+  for (const r of state.plan.rooms) {
+    let R = outline(r).map(q => q.slice());
+    for (const L of lines) { // keep the part of the room on the inner side of this line
+      const out = [], side = q => (q[0] - L.x) * L.nx + (q[1] - L.y) * L.ny;
+      R.forEach((q, i) => { const c = R[(i + 1) % R.length], a = side(q), b = side(c); if (a >= -1e-9) out.push(q); if ((a > 1e-9 && b < -1e-9) || (a < -1e-9 && b > 1e-9)) { const k = a / (a - b); out.push([q[0] + (c[0] - q[0]) * k, q[1] + (c[1] - q[1]) * k]); } });
+      R = out; if (R.length < 3) break;
+    }
+    if (R.length < 3 || polyArea(R) < 1.5) { removed++; continue; }
+    if (Math.abs(polyArea(R) - roomArea(r)) > 1e-6) { cut++; setOutline(r, R); }
+    kept.push(r);
+  }
+  if (!kept.length) return { ok: false, why: 'nothing left' };
+  state.plan.rooms = kept; if (!roomById(state.sel)) state.sel = null;
+  changed(); return { ok: true, cut, removed };
 }
 function removeRoom(id) {
   if (state.plan.rooms.length < 2 || !roomById(id)) return false;
@@ -1087,7 +1178,11 @@ for (const type of ['pointerup', 'pointercancel']) svg.addEventListener(type, e 
   if (e.pointerId !== activePointer) return;
   activePointer = null; tool.send({ type: type === 'pointerup' ? 'POINTER.UP' : 'CANCEL' });
 });
-document.addEventListener('keydown', e => { if (e.key === 'Escape' && !tool.getSnapshot().matches('idle')) { activePointer = null; tool.send({ type: 'CANCEL' }); } });
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && !tool.getSnapshot().matches('idle')) { activePointer = null; tool.send({ type: 'CANCEL' }); return; }
+  const typing = /^(INPUT|TEXTAREA|SELECT)$/.test((e.target && e.target.tagName) || '');
+  if ((e.ctrlKey || e.metaKey) && !typing && (e.key === 'z' || e.key === 'Z' || e.key === 'y') && tool.getSnapshot().matches('idle')) { e.preventDefault(); step(!(e.shiftKey || e.key === 'y')); }
+});
 
 /* ---------- side panel ---------- */
 function renderList() {
@@ -1102,6 +1197,7 @@ function syncEditor(force) {
   const f = finishOf(r);
   set('#edFloor', f.floor); set('#edTile', f.tile || 'none'); set('#edTileTo', f.tileTo); set('#edSpec', r.spec || ''); set('#edPaintPick', f.paint);
   $('#edTileTo').disabled = !f.tile;
+  $('#edFree').hidden = !!r.points; $('#edSquare').hidden = !r.points;
   document.querySelectorAll('#edPaints .swatch').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.paint === f.paint)));
 }
 $('#edFloor').innerHTML = Object.entries(FINISHES).map(([id, f]) => `<option value="${id}">${f.label}</option>`).join('');
@@ -1118,6 +1214,27 @@ $('#edName').addEventListener('input', e => { if (state.sel) updateRoom(state.se
 $('#edType').addEventListener('change', e => { if (state.sel) updateRoom(state.sel, { type: e.target.value }); });
 for (const [id, key] of [['#edW', 'w'], ['#edH', 'h']]) $(id).addEventListener('change', e => { const r = selected(); if (r) { updateRoom(r.id, { [key]: e.target.value }); e.target.value = r[key]; } });
 $('#delRoom').addEventListener('click', () => { if (state.sel) removeRoom(state.sel); });
+$('#edTurnL').addEventListener('click', () => { if (state.sel) { updateRoom(state.sel, { rotate: -15 }); syncEditor(true); } });
+$('#edTurnR').addEventListener('click', () => { if (state.sel) { updateRoom(state.sel, { rotate: 15 }); syncEditor(true); } });
+$('#edFree').addEventListener('click', () => { const r = selected(); if (r && !r.points) { r.points = outline(r); changed(); syncEditor(true); } });
+$('#edSquare').addEventListener('click', () => { const r = selected(); if (r && r.points) { delete r.points; Object.assign(r, { x: snap(r.x), y: snap(r.y), w: Math.max(1, snap(r.w)), h: Math.max(1, snap(r.h)) }); changed(); syncEditor(true); } });
+$('#undoBtn').addEventListener('click', () => step(true)); $('#redoBtn').addEventListener('click', () => step(false));
+// plot
+const plotSay = (t, err) => { const el = $('#plotStatus'); el.className = 'status' + (err ? ' err' : ''); el.textContent = t; };
+function syncPlot() {
+  const has = !!state.plan.plot; if (!has) state.editPlot = false;
+  $('#plotAdd').hidden = has; $('#plotEdit').hidden = !has; $('#plotRemove').hidden = !has; $('#plotTools').hidden = !has;
+  $('#plotEdit').setAttribute('aria-pressed', String(state.editPlot)); $('#plotEdit').textContent = state.editPlot ? 'Done' : 'Edit corners';
+}
+$('#plotAdd').addEventListener('click', () => { const b = bounds(state.plan), m = 3; setPlot([[b.x0 - m, b.y0 - m], [b.x1 + m, b.y0 - m], [b.x1 + m, b.y1 + m], [b.x0 - m, b.y1 + m]]); state.editPlot = true; if (state.sel) select(null); else render2D(); syncPlot(); plotSay('Plot added 3 m around the home. Drag its corners to match your land; the mark on each side adds a corner.'); });
+$('#plotEdit').addEventListener('click', () => { state.editPlot = !state.editPlot; if (state.editPlot && state.sel) select(null); else render2D(); syncPlot(); plotSay(state.editPlot ? 'Drag a corner of the plot, or press the mark on a side to add one.' : ''); });
+$('#plotRemove').addEventListener('click', () => { setPlot(null); plotSay('Plot removed. The rooms stay.'); });
+$('#plotAlign').addEventListener('click', () => { if (alignToPlot()) { view.fit(); plotSay('The home now runs along the longest side of the plot and sits in its middle.'); } });
+$('#plotTrim').addEventListener('click', () => {
+  const r = trimToPlot($('#plotSetback').value);
+  plotSay(r.ok ? (r.cut || r.removed ? `Trimmed ${r.cut} room${r.cut === 1 ? '' : 's'} to the boundary${r.removed ? ` and removed ${r.removed} that fell outside` : ''}. Undo brings them back.` : 'Every room is already inside the boundary.')
+    : r.why === 'not convex' ? 'Trimming needs a plot without inward corners. Straighten the plot, or shape the rooms by hand with "Edit corners".' : r.why === 'nothing left' ? 'No room would be left inside that boundary. Use a smaller distance, or align the home first.' : 'Add a plot first.', !r.ok);
+});
 $('#addRoom').addEventListener('click', () => { addRoom(); view.fit(); });
 $('#planName').addEventListener('input', e => { state.plan.name = e.target.value.slice(0, 60) || 'Untitled home'; store.set(exportPlan(state.plan)); if (document.activeElement !== $('#jsonBox')) $('#jsonBox').value = JSON.stringify(exportPlan(state.plan), null, 1); });
 $('#presets').innerHTML = PRESETS.map((p, i) => `<button type="button" class="btn" data-preset="${i}"><span>${p.name}</span><small>${(p.width * p.depth).toFixed(0)} m² · ${p.width} × ${p.depth} m</small></button>`).join('');
@@ -1235,7 +1352,7 @@ $('#zoomBtn').addEventListener('click', () => { state.zoomHome = !state.zoomHome
 
 /* ---------- 3D view ---------- */
 const view = (() => {
-  const canvas = $('#view3d'), noop = { build() {}, fit() {}, resize() {}, setInsets() {}, reframe() {}, stats: () => ({ skins: 0, tiled: 0, models: 0, boxes: 0 }) };
+  const canvas = $('#view3d'), noop = { build() {}, fit() {}, resize() {}, setInsets() {}, reframe() {}, stats: () => ({ skins: 0, tiled: 0, models: 0, boxes: 0 }), toGLB: () => Promise.reject(new Error('no 3D view')) };
   if (typeof THREE === 'undefined') { $('#nogl').hidden = false; $('#nogl').textContent = 'The 3D library did not load. Check the connection and reload. The plan still works.'; $('#hint3d').hidden = true; return noop; }
   let renderer;
   try { renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true }); } catch (e) { $('#nogl').hidden = false; $('#hint3d').hidden = true; return noop; }
@@ -1484,7 +1601,9 @@ const view = (() => {
     if (dirty) { dirty = false; renderer.render(scene, camera); }
   })();
   theme();
-  return { build, fit() { resize(); fit(); }, resize, setInsets(i) { Object.assign(inset, i); }, reframe() { if (framed) { resize(); fit(); } }, stats: () => stats };
+  return { build, fit() { resize(); fit(); }, resize, setInsets(i) { Object.assign(inset, i); }, reframe() { if (framed) { resize(); fit(); } }, stats: () => stats,
+    // the model as it is drawn now, as one binary glTF file
+    toGLB: () => new Promise((ok, no) => { if (!THREE.GLTFExporter || !group) { no(new Error('no exporter')); return; } try { new THREE.GLTFExporter().parse(group, ok, { binary: true }); } catch (e) { no(e); } }) };
 })();
 
 /* ---------- uploaded drawing ---------- */
@@ -1924,6 +2043,41 @@ tool.subscribe(s => {
   if (state.plan) render2D();
 });
 
+/* ---------- taking the plan elsewhere ---------- */
+// DXF (R12 text): walls, openings, room outlines and names, and the plot, each on its own layer. DXF's y runs up, so y is flipped.
+function toDXF() {
+  const out = ['0', 'SECTION', '2', 'ENTITIES'], f = v => String(r3(v));
+  const line = (layer, a, b) => out.push('0', 'LINE', '8', layer, '10', f(a[0]), '20', f(-a[1]), '11', f(b[0]), '21', f(-b[1]));
+  const loop = (layer, P) => P.forEach((q, i) => line(layer, q, P[(i + 1) % P.length]));
+  for (const w of state.an.pieces) {
+    let cur = w.t0;
+    for (const o of [...w.openings].sort((a, c) => a.t0 - c.t0)) { if (o.t0 - cur > 0.005) line('WALLS', onWall(w, cur), onWall(w, o.t0)); line(o.kind === 'window' ? 'WINDOWS' : 'DOORS', onWall(w, o.t0), onWall(w, o.t1)); cur = o.t1; }
+    if (w.t1 - cur > 0.005) line('WALLS', onWall(w, cur), onWall(w, w.t1));
+  }
+  for (const r of state.plan.rooms) {
+    loop('ROOMS', outline(r)); const c = centroid(outline(r));
+    out.push('0', 'TEXT', '8', 'NAMES', '10', f(c[0]), '20', f(-c[1]), '40', '0.25', '1', String(r.name).replace(/[\r\n]/g, ' '));
+  }
+  if (state.plan.plot) loop('PLOT', state.plan.plot);
+  out.push('0', 'ENDSEC', '0', 'EOF');
+  return out.join('\n') + '\n';
+}
+// In Claude a file is offered through the viewer's own save prompt; anywhere else it is an ordinary browser download.
+async function saveFile(filename, data, say) {
+  let dl = null;
+  try { dl = window.claude && window.claude.use ? await window.claude.use('downloads') : null; } catch (e) { dl = null; }
+  try {
+    if (dl) await dl.save({ filename, data });
+    else { const a = document.createElement('a'); a.href = URL.createObjectURL(data instanceof Blob ? data : new Blob([data])); a.download = filename; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000); }
+    say(`Saved ${filename}.`);
+  } catch (e) { say(e && e.code === 'declined' ? 'Not saved.' : `Could not save ${filename} here. Use "Copy" for the plan data instead.`, true); }
+}
+const fileStem = () => (state.plan.name || 'plan').replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').toLowerCase() || 'plan';
+const jsonSay = (t, err) => { const el = $('#jsonStatus'); el.className = 'status' + (err ? ' err' : ''); el.textContent = t; };
+$('#saveJson').addEventListener('click', () => saveFile(fileStem() + '.json', JSON.stringify(exportPlan(state.plan), null, 1), jsonSay));
+$('#saveDxf').addEventListener('click', () => saveFile(fileStem() + '.dxf', toDXF(), jsonSay));
+$('#saveGlb').addEventListener('click', async () => { try { saveFile(fileStem() + '.glb', await view.toGLB(), jsonSay); } catch (e) { jsonSay('The 3D model could not be made in this browser.', true); } });
+
 /* ---------- window.roomlines: the same controls, for scripts, tests and agents ---------- */
 const actors = { tool, drawing, describe, read, models }, listeners = new Set(), log = [];
 const flat = v => typeof v === 'string' ? v : Object.entries(v).map(([k, c]) => `${k}.${flat(c)}`).join('+');
@@ -1939,7 +2093,9 @@ const api = {
   finishes: () => Object.entries(FINISHES).map(([id, f]) => ({ id, label: f.label, wall: !!f.wall })),
   loadPlan: json => { setPlan(normalizePlan(json)); return api.getPlan(); },
   roomTypes: () => Object.keys(TYPES),
-  addRoom, updateRoom, removeRoom,
+  addRoom, updateRoom, removeRoom, addCorner, setPlot, alignToPlot, trimToPlot,
+  undo: () => step(true), redo: () => step(false),
+  toDXF, toGLB: () => view.toGLB(),
   select: id => { select(id); return state.sel; },
   setView: (o = {}) => {
     if (['both', '3d', 'plan'].includes(o.mode)) setMode(o.mode);
@@ -1985,7 +2141,7 @@ setPlan(first || normalizePlan(PRESETS[2]));
 if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { layoutPanel(); });
 refract($('#titleBar')); refract($('#viewBar'));
 booted = true;
-window.__roomlines = { state, under, view, analyze, furnish, normalizePlan, setPlan, applyReading, handleFile, PRESETS }; // internals, for the tests only
+window.__roomlines = { state, under, view, analyze, furnish, normalizePlan, setPlan, applyReading, handleFile, edgesOf, outline, PRESETS }; // internals, for the tests only
 })();
 </script>
 </body>
