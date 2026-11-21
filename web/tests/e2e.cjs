@@ -973,6 +973,32 @@ async function drag(page, level, grab, by, lift = 0) {
     ok('its lines lie on the ground to draw over, and it is one undo step', got.underlay === 'lines' && got.undo === 1, got);
     await f.keyboard.press('Control+z');
     ok('which undo takes back', (await f.evaluate(() => [likuloka.getDoc().roots.length, likuloka.getDoc().plot])).join() === `${before},`);
+    // it lands beside what was there, not on it
+    await f.keyboard.press('Control+Shift+z');
+    const beside = await f.evaluate(n => { const d = likuloka.getDoc(), old = likuloka.ops.footprint({ ...d, roots: d.roots.slice(0, n) }), b = d.nodes[d.roots[n]]; const xs = likuloka.ops.footprint({ ...d, roots: [b.id] }).map(p => p[0]); return { gap: Math.min(...xs) - Math.max(...old.map(p => p[0])), said: document.querySelector('[data-trace-said]').textContent }; }, before);
+    ok('a drawing brought into a project with buildings lands beside them', beside.gap >= 5 && /beside what was already drawn/.test(beside.said), beside);
+    await f.keyboard.press('Control+z');
+    // rooms drawn to the inside faces of their walls, 150 mm apart
+    await f.setInputFiles('[data-action="trace-file"]', fixture('inside-faces.dxf'));
+    await f.waitForSelector('[data-trace="dxf"]');
+    await f.click('[data-action="dxf-import"]');
+    await frames(f);
+    const faces = await f.evaluate(n => {
+      const d = likuloka.getDoc(), b = d.nodes[d.roots[n]], l = d.nodes[b.children[0]], kids = l.children.map(k => d.nodes[k]);
+      const walls = kids.filter(k => k.type === 'wall'), key = w => [w.a, w.b].map(p => p.join()).sort().join('|');
+      return { rooms: kids.filter(k => k.type === 'zone').map(z => z.name + ':' + z.use).sort().join(), walls: walls.length, doubled: walls.length - new Set(walls.map(key)).size,
+        offGrid: walls.filter(w => [...w.a, ...w.b].some(v => Math.abs(v * 4 - Math.round(v * 4)) > 1e-9)).length, noDoor: likuloka.checks().filter(i => i.rule === 'no-door' && d.nodes[i.node].parent === l.id).length };
+    }, before);
+    ok('rooms drawn to the inside of their walls share one wall each, on the grid, with doors', faces.rooms === 'Bedroom:bedroom,Kitchen:kitchen,Living:living' && faces.doubled === 0 && faces.offGrid === 0 && faces.noDoor === 0 && faces.walls <= 10, faces);
+    await f.keyboard.press('Control+z');
+    const big = await f.evaluate(() => {
+      let t = '0\nSECTION\n2\nENTITIES\n';
+      for (let i = 0; i < 150000; i++) t += `0\nLINE\n8\nHATCH\n10\n${i % 400 * 50}\n20\n${Math.floor(i / 400) * 50}\n11\n${i % 400 * 50 + 40}\n21\n${Math.floor(i / 400) * 50}\n`;
+      t += '0\nENDSEC\n0\nEOF\n';
+      const t0 = performance.now(), d = likuloka.parseDxf(t);
+      return { lines: d.layers[0].segments.length, ms: Math.round(performance.now() - t0), size: d.size };
+    });
+    ok('a drawing of 150 000 lines is read', big.lines === 150000 && big.ms < 8000, big);
     // the same drawing as R12, which states no unit
     await f.setInputFiles('[data-action="trace-file"]', fixture('villa-r12.dxf'));
     await f.waitForSelector('[data-trace="dxf"]');

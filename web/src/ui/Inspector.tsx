@@ -350,14 +350,14 @@ function TracePanel({ error }: { error: string | null }) {
   };
   const bring = () => {
     if (!drawing) return;
-    let got = { plot: false, rooms: 0, pools: 0 };
+    let got: { plot: boolean; rooms: number; pools: number; at: Vec2; replaced: boolean } = { plot: false, rooms: 0, pools: 0, at: [0, 0], replaced: false };
     const done = commit(d => { const [next, g] = importDxf(d, drawing, choice); got = g; return next; }, 'Import drawing');
     if (!done) return;
-    if (lines) setUnderlay({ kind: 'lines', segments: fromDxf(drawing, choice).segments, at: [0, 0], opacity: 0.7, shown: true });
+    if (lines) setUnderlay({ kind: 'lines', segments: fromDxf(drawing, choice, got.at).segments, at: [0, 0], opacity: 0.7, shown: true });
     setDrawing(null);
     rig.invalidate();
     const parts = [got.plot && 'the plot', got.rooms && `${got.rooms} room${got.rooms === 1 ? '' : 's'}`, got.pools && `${got.pools} pool${got.pools === 1 ? '' : 's'}`].filter(Boolean);
-    setSaid({ text: parts.length ? `Brought in ${parts.join(', ')}. One undo takes it back.` : lines ? 'Its lines are on the ground to draw over. Nothing was added to the project.' : 'Nothing was chosen to bring in.' });
+    setSaid({ text: parts.length ? `Brought in ${parts.join(', ')}${got.at[0] || got.at[1] ? ', beside what was already drawn' : ''}.${got.replaced ? ' It replaced the plot the project had.' : ''} One undo takes it back.` : lines ? 'Its lines are on the ground to draw over. Nothing was added to the project.' : 'Nothing was chosen to bring in.' });
   };
   const closed = drawing ? drawing.layers.filter(l => l.closed.length) : [];
   const k = { mm: 0.001, cm: 0.01, m: 1 }[choice.unit];
@@ -383,7 +383,7 @@ function TracePanel({ error }: { error: string | null }) {
             <select value={choice.rooms ?? ''} aria-label="Rooms layer" onChange={e => setChoice({ ...choice, rooms: e.target.value || null })}>
               <option value="">None</option>{closed.map(l => <option key={l.name} value={l.name}>{l.name} ({l.closed.length})</option>)}
             </select><i aria-hidden="true" /></label>
-          <p className="hint">Each closed polyline on the rooms layer becomes a room, named by the text inside it. The largest on the plot layer becomes the plot.{closed.length ? '' : ' This file has no closed polylines, so only its lines can be shown.'}</p>
+          <p className="hint">Each closed polyline on the rooms layer becomes a room, named by the text inside it; its corners move to the nearest 250 mm, so rooms drawn to the inside of their walls still share one wall. The largest on the plot layer becomes the plot.{closed.length ? '' : ' This file has no closed polylines, so only its lines can be shown.'}</p>
           <label className="check"><input type="checkbox" checked={lines} onChange={e => setLines(e.target.checked)} /> Show its lines on the ground to draw over</label>
           <button type="button" className="add" data-action="dxf-import" onClick={bring}>Bring it in</button>
         </div>

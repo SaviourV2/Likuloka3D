@@ -10,7 +10,7 @@
  * CAD has y pointing up and no fixed unit. The result is in plan metres with
  * y down, moved so the drawing's top-left corner is at the origin.
  */
-import { addBuilding, addLevel, addZone, setPlot, snapPoint } from './ops';
+import { addBuilding, addLevel, addZone, footprint, setPlot, snapPoint } from './ops';
 import { importRoomlines, useOf } from './roomlines';
 import type { Id, SceneDoc, Vec2 } from './types';
 
@@ -70,12 +70,13 @@ export function parseDxf(text: string): DxfDrawing {
     i = j;
   }
   const good = raws.filter(r => r.pts.length && r.pts.every(p => Number.isFinite(p[0]) && Number.isFinite(p[1])));
-  const all = good.filter(r => !r.text).flatMap(r => r.pts);
-  if (!all.length) throw new Error('This DXF file has no lines or polylines to read.');
-  const minX = Math.min(...all.map(p => p[0])), maxX = Math.max(...all.map(p => p[0])), minY = Math.min(...all.map(p => p[1])), maxY = Math.max(...all.map(p => p[1]));
+  // a loop, not Math.min(...): a real drawing has more points than a call takes arguments
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  for (const r of good) if (!r.text) for (const p of r.pts) { if (p[0] < minX) minX = p[0]; if (p[0] > maxX) maxX = p[0]; if (p[1] < minY) minY = p[1]; if (p[1] > maxY) maxY = p[1]; }
+  if (minX === Infinity) throw new Error('This DXF file has no lines or polylines to read.');
   const size: [number, number] = [maxX - minX, maxY - minY];
   // With no unit stated: a drawing thousands of units across is in millimetres, a few hundred in centimetres.
-  const big = Math.max(...size), unit: DxfUnit = stated ?? (big > 2000 ? 'mm' : big > 200 ? 'cm' : 'm');
+  const big = Math.max(size[0], size[1]), unit: DxfUnit = stated ?? (big > 2000 ? 'mm' : big > 200 ? 'cm' : 'm');
   const layers = new Map<string, DxfLayer>();
   const at = (name: string) => { let l = layers.get(name); if (!l) { l = { name, closed: [], segments: [], texts: [] }; layers.set(name, l); } return l; };
   // y is flipped here; the unit is applied by `scaled`, once the person has confirmed it.
@@ -110,8 +111,8 @@ export const ROOM_LAYER = /room|area|zone|space|ruang|rm-/i;
 export interface DxfChoice { unit: DxfUnit; plot: string | null; rooms: string | null }
 
 /** What a drawing gives with the person's choices: the plot, the rooms with their names, and every line in metres. */
-export function fromDxf(d: DxfDrawing, c: DxfChoice) {
-  const k = SCALE[c.unit], S = (p: Vec2): Vec2 => [p[0] * k, p[1] * k];
+export function fromDxf(d: DxfDrawing, c: DxfChoice, at: Vec2 = [0, 0]) {
+  const k = SCALE[c.unit], S = (p: Vec2): Vec2 => [p[0] * k + at[0], p[1] * k + at[1]];
   const layer = (n: string | null) => d.layers.find(l => l.name === n);
   // the plot is the largest closed outline on its layer
   const plot = layer(c.plot)?.closed.map(r => r.map(S)).sort((a, b) => area(b) - area(a))[0] ?? null;
@@ -125,14 +126,25 @@ export function fromDxf(d: DxfDrawing, c: DxfChoice) {
   return { plot, rooms, segments, size: [d.size[0] * k, d.size[1] * k] as [number, number] };
 }
 
+/** Where a drawing goes so it does not land on what is already drawn: 5 m to the right of it, on the grid. */
+export function besideExisting(doc: SceneDoc): Vec2 {
+  const pts = footprint(doc);
+  if (!pts.length) return [0, 0];
+  let maxX = -Infinity, minY = Infinity;
+  for (const p of pts) { if (p[0] > maxX) maxX = p[0]; if (p[1] < minY) minY = p[1]; }
+  return snapPoint([maxX + 5, minY]);
+}
+
 /**
  * Brings a drawing into the project in one step: its plot, and its rooms as a
  * new building with walls, a slab, doors and windows (the Roomlines import
  * does that part, so corners go onto the 0.25 m grid). A pool is added as a
  * pool, without walls. Returns the new document and how much came in.
  */
-export function importDxf(doc: SceneDoc, d: DxfDrawing, c: DxfChoice, name = 'Imported drawing'): [SceneDoc, { plot: boolean; rooms: number; pools: number }] {
-  const got = fromDxf(d, c);
+export function importDxf(doc: SceneDoc, d: DxfDrawing, c: DxfChoice, name = 'Imported drawing'): [SceneDoc, { plot: boolean; rooms: number; pools: number; at: Vec2; replaced: boolean }] {
+  const at = besideExisting(doc);
+  const got = fromDxf(d, c, at);
+  const replaced = !!got.plot && !!doc.plot;
   let next = doc;
   if (got.plot) next = setPlot(next, got.plot);
   const pools = got.rooms.filter(r => useOf(r) === 'pool'), rooms = got.rooms.filter(r => useOf(r) !== 'pool');
@@ -144,5 +156,5 @@ export function importDxf(doc: SceneDoc, d: DxfDrawing, c: DxfChoice, name = 'Im
     const level = b?.type === 'building' ? b.children[0] : '';
     for (const p of pools) [next] = addZone(next, level, { name: p.name, use: 'pool', points: p.points.map(snapPoint) });
   }
-  return [next, { plot: !!got.plot, rooms: rooms.length, pools: pools.length }];
+  return [next, { plot: !!got.plot, rooms: rooms.length, pools: pools.length, at, replaced }];
 }
