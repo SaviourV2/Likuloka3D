@@ -5,7 +5,7 @@
  * - a door or window's product, finish, head shape, open or closed, and name;
  *   its type or size only by choosing a catalogue product, so every size a
  *   client picks is one that can be made;
- * - a room's name, use and floor finish;
+ * - a room's name, use, floor finish and furnishing option;
  * - the project's name.
  *
  * Walls, levels, slabs, buildings, the plot, where openings sit and the
@@ -26,7 +26,7 @@ export const CLIENT_REFUSAL = 'In the client view you can choose doors, windows,
 
 const OPENING_FREE: (keyof OpeningNode)[] = ['product', 'finish', 'state', 'shape', 'name'];
 const OPENING_BY_PRODUCT: (keyof OpeningNode)[] = ['kind', 'width', 'height', 'sill'];
-const ZONE_FREE: (keyof ZoneNode)[] = ['name', 'use', 'floor'];
+const ZONE_FREE: (keyof ZoneNode)[] = ['name', 'use', 'floor', 'option'];
 
 function changedKeys(p: SceneNode, n: SceneNode): string[] {
   const keys = new Set([...Object.keys(p), ...Object.keys(n)]);

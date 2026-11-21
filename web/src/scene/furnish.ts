@@ -16,25 +16,25 @@
  * A room is measured to the inside faces of its walls: each edge of the zone
  * is moved in by half the thickness of the wall on it.
  */
-import type { Id, OpeningNode, RoomType, SceneDoc, WallNode, ZoneNode } from './types';
+import type { Id, OpeningNode, RoomType, SceneDoc, WallNode, ZoneNode, ZoneOption } from './types';
 
 type Pt = [number, number];
 /** A box of a piece: from a0 to a1 along the wall, d0 to d1 out from it, z0 to z1 up, its colour and its shape. */
 type Part = [number, number, number, number, number, number, number, string?];
 /** A model of a piece: its file name, then the same six limits, and 'flip' to face the wall. */
 type Model = [string, number, number, number, number, number, number, string?];
-interface Item { w: number; dep: number; parts: Part[]; models?: Model[]; tall?: boolean; soft?: boolean }
+interface Item { w: number; dep: number; parts: Part[]; models?: Model[]; tall?: boolean; soft?: boolean; tag?: string }
 
 export interface FurnitureBox { kind: 'box' | 'cyl' | 'ball' | 'glass'; cx: number; cz: number; lw: number; ld: number; z0: number; z1: number; yaw: number; color: number; x0: number; x1: number; y0: number; y1: number }
 export interface FurnitureModel { name: string; cx: number; cz: number; w: number; d: number; y0: number; h: number; yaw: number }
 /** One piece of furniture: its boxes and, when it has them, the models that replace the boxes. */
-export interface FurniturePiece { zone: Id; boxes: FurnitureBox[]; models: FurnitureModel[] | null; tint: number }
+export interface FurniturePiece { zone: Id; boxes: FurnitureBox[]; models: FurnitureModel[] | null; tint: number; /** What the piece is, for the pieces a room's option asks for: 'island', 'sunken-bed'. */ tag?: string }
 
 interface Quad { pts: Pt[]; flat: boolean; x0: number; x1: number; y0: number; y1: number }
 interface Frame { side: string; len: number; depth: number; u: Pt; n: Pt; yaw: number; at: (a: number, d: number) => Pt }
 interface Info { side: string; fr: Frame; len: number; depth: number; doors: number; windows: number; score?: number }
 interface Room { x: number; y: number; w: number; h: number; points?: Pt[] }
-interface Ctx { r: Room; frames: Frame[]; zones: Quad[]; winZones: Quad[]; placed: Quad[]; pieces: FurniturePiece[]; soft: number; zone: Id }
+interface Ctx { r: Room; frames: Frame[]; zones: Quad[]; winZones: Quad[]; placed: Quad[]; pieces: FurniturePiece[]; soft: number; zone: Id; option: ZoneOption }
 
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v));
 const signedArea = (P: readonly (readonly number[])[]) => P.reduce((t, p, i) => { const q = P[(i + 1) % P.length]; return t + p[0] * q[1] - q[0] * p[1]; }, 0) / 2;
@@ -117,7 +117,7 @@ function put(ctx: Ctx, fr: Frame, a: number, d: number, item: Item): boolean {
     const c = fr.at(a + (m[1] + m[2]) / 2, d + (m[3] + m[4]) / 2);
     return { name: m[0], cx: c[0], cz: c[1], w: m[2] - m[1], d: m[4] - m[3], y0: m[5], h: m[6] - m[5], yaw: fr.yaw + (m[7] === 'flip' ? Math.PI : 0) };
   }) : null;
-  ctx.pieces.push({ zone: ctx.zone, boxes, models, tint: ctx.soft });
+  ctx.pieces.push({ zone: ctx.zone, boxes, models, tint: ctx.soft, ...(item.tag ? { tag: item.tag } : {}) });
   return true;
 }
 type Where = 'center' | 'start' | 'end';
@@ -190,12 +190,60 @@ const kitchenRun = (L: number, uppers: boolean): Item => {
   return { w: L, dep: 0.68, parts: P, models: M };
 };
 
+/**
+ * A sunken bed: a low mattress set down into a timber deck that runs round it,
+ * with a headboard at the wall. The floor itself is not cut; the deck is what
+ * the mattress sits below.
+ */
+const sunkenBedItem = (bw: number, col: number): Item => {
+  const rim = 0.35, W = bw + 2 * rim, D = 2.05 + rim, top = 0.3;
+  const P: Part[] = [
+    [0, W, 0, 0.08, 0, 0.8, C.wood],                         // headboard
+    [0, rim, 0.08, D, 0, top, C.wood], [W - rim, W, 0.08, D, 0, top, C.wood], [rim, W - rim, 2.05, D, 0, top, C.wood], // the deck, on three sides
+    [rim, W - rim, 0.08, 2.05, 0, 0.06, C.dark],             // the pit's floor
+    [rim + 0.03, W - rim - 0.03, 0.1, 2.02, 0.06, 0.24, C.white], // mattress, below the deck
+    [rim + 0.03, W - rim - 0.03, 0.8, 2.02, 0.24, 0.28, col],     // cover
+  ];
+  const n = bw > 1.2 ? 2 : 1;
+  for (let i = 0; i < n; i++) { const c = rim + bw * (i + 0.5) / n; P.push([c - 0.3, c + 0.3, 0.16, 0.56, 0.24, 0.34, 0xffffff]); }
+  return { w: W, dep: D, parts: P, tag: 'sunken-bed' };
+};
+/** A kitchen island: cabinets under a stone top that overhangs on the far side, where the stools go. */
+const islandItem = (w: number): Item => {
+  const P: Part[] = [[0.02, w - 0.02, 0.04, 0.62, 0, 0.1, C.dark], [0, w, 0, 0.66, 0.1, 0.86, C.cab], [0, w, 0, 0.95, 0.86, 0.9, C.stone]];
+  return { w, dep: 0.95, parts: P, tag: 'island' };
+};
+const stoolsItem = (w: number): Item => {
+  const P: Part[] = [], n = Math.max(2, Math.floor(w / 0.6));
+  for (let i = 0; i < n; i++) { const c = w * (i + 0.5) / n; P.push([c - 0.17, c + 0.17, 0.02, 0.36, 0.6, 0.65, C.wood, 'cyl'], [c - 0.03, c + 0.03, 0.16, 0.22, 0, 0.6, C.dark, 'cyl']); }
+  return { w, dep: 0.4, parts: P };
+};
+/** Puts an island in front of the kitchen run, an aisle away, with stools on its far side. */
+function island(ctx: Ctx, run: Info | null): boolean {
+  const walls = run ? [run.fr, ...ctx.frames.filter(f => f !== run.fr)] : ctx.frames;
+  for (const fr of walls) for (const w of [2.4, 1.8, 1.5]) for (const d of [1.7, 1.5, 1.9, 2.2]) for (const k of [0.5, 0.35, 0.65]) {
+    const a = (fr.len - w) * k;
+    if (!put(ctx, fr, a, d, islandItem(w))) continue;
+    put(ctx, fr, a, d + 0.97, stoolsItem(w)); // stools only where there is room behind the island
+    return true;
+  }
+  return false;
+}
+
 const RECIPES: Partial<Record<RoomType, (ctx: Ctx) => void>> = {
+  /** A pool: a stone coping along every side and steps in. The water is the zone's own surface. */
+  pool(ctx: Ctx) {
+    for (const fr of ctx.frames) if (fr.len > 0.6) put(ctx, fr, 0.05, 0, { w: fr.len - 0.1, dep: 0.3, soft: true, parts: [[0, fr.len - 0.1, 0, 0.3, 0, 0.05, C.stone]] });
+    const long = [...ctx.frames].sort((p, q) => q.len - p.len)[0];
+    if (long && long.len >= 3 && long.depth >= 2) put(ctx, long, 0.4, 0.3, { w: 1.2, dep: 0.9, soft: true, parts: [[0, 1.2, 0, 0.3, 0.012, 0.04, 0xbfe9f7], [0, 1.2, 0.3, 0.6, 0.012, 0.03, 0x9fdcf1], [0, 1.2, 0.6, 0.9, 0.012, 0.02, 0x7fcfea]] });
+  },
   bedroom(ctx: Ctx) {
     const r = ctx.r, area = r.w * r.h, dbl = Math.min(r.w, r.h) >= 2.7 && area >= 8.5, bw = dbl ? (area >= 13 ? 1.8 : 1.6) : 0.95;
     let bedSide: string | null = null;
     const order = sides(ctx, i => solid(i) + (i.depth >= 2.75 ? 4 : -20) + (i.len >= bw + 1.1 ? 2 : 0));
-    for (const ns of [true, false]) { for (const s of order) { if (along(ctx, s, bedItem(bw, ns, ctx.soft)) !== null) { bedSide = s.side; break; } } if (bedSide) break; }
+    // a sunken bed where the room asks for one and it fits; otherwise the standard bed
+    if (ctx.option === 'sunken') for (const s of order) { if (along(ctx, s, sunkenBedItem(bw, ctx.soft)) !== null) { bedSide = s.side; break; } }
+    if (!bedSide) for (const ns of [true, false]) { for (const s of order) { if (along(ctx, s, bedItem(bw, ns, ctx.soft)) !== null) { bedSide = s.side; break; } } if (bedSide) break; }
     for (const w of [1.8, 1.2, 0.9]) if (anySide(ctx, { w, dep: 0.6, tall: true, parts: [[0, w, 0, 0.6, 0, 2.1, C.ward], [w / 2 - 0.01, w / 2 + 0.01, 0.6, 0.605, 0.05, 2.05, C.dark]], models: ((n: number) => Array.from({ length: n }, (_, i): Model => ['bookcaseClosedDoors', i * w / n, (i + 1) * w / n, 0, 0.6, 0, 2.1]))(Math.round(w / 0.9)) }, i => -i.doors * 10 - i.windows * 5 + i.len * 0.1, ['start', 'end', 'center'], bedSide ? [bedSide] : [])) break;
     if (area >= 12) anySide(ctx, plantItem(), () => 0, ['start', 'end']);
   },
@@ -226,10 +274,13 @@ const RECIPES: Partial<Record<RoomType, (ctx: Ctx) => void>> = {
     free(ctx, tableSet(0.9, 0.8));
   },
   kitchen(ctx: Ctx) {
+    let run: Info | null = null;
     outer: for (const s of sides(ctx, i => -i.doors * 4 + i.len - i.windows * 0.5)) {
       for (const f of [1, 0.8, 0.6]) { const L = Math.min(4.6, s.len * f - 0.12); if (L < 1.4) continue;
-        if (along(ctx, s, kitchenRun(L, !s.windows), ['start', 'end', 'center']) !== null) break outer; }
+        if (along(ctx, s, kitchenRun(L, !s.windows), ['start', 'end', 'center']) !== null) { run = s; break outer; } }
     }
+    // an island takes the place of the table; a kitchen too small for one keeps the table
+    if (ctx.option === 'island' && island(ctx, run)) return;
     const r = ctx.r, area = r.w * r.h;
     if (area >= 13 && Math.min(r.w, r.h) >= 3.2) free(ctx, tableSet(1.6, 0.9)) || free(ctx, tableSet(1.2, 0.8));
     else if (area >= 8.5) free(ctx, tableSet(0.9, 0.8));
@@ -326,7 +377,7 @@ export function furnishLevel(doc: SceneDoc, levelId: Id): FurniturePiece[] {
   const pieces: FurniturePiece[] = [];
   kids.filter((n): n is ZoneNode => n?.type === 'zone').forEach((z, i) => {
     const recipe = RECIPES[z.use], r = recipe && roomOf(z, walls);
-    if (recipe && r) recipe({ r, frames: edgesOf(r), zones, winZones, placed: [], pieces, soft: SOFT[i % SOFT.length], zone: z.id });
+    if (recipe && r) recipe({ r, frames: edgesOf(r), zones, winZones, placed: [], pieces, soft: SOFT[i % SOFT.length], zone: z.id, option: z.option });
   });
   return pieces;
 }

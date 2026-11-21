@@ -4,7 +4,7 @@
  * is what dirty tracking and undo rely on. Invalid input throws a SceneError.
  */
 import {
-  DEFAULT_SETTINGS, FLOOR_KEYS, GRID, MIN_ARCH_SIDE, SIZE_STEP, MIN_WALL, OPENING_DEFAULTS, OPENING_FINISHES, OPENING_MARGIN, OPENING_SHAPES, ROOM_TYPES, UNTITLED,
+  DEFAULT_SETTINGS, FLOOR_KEYS, GRID, optionFor, ZONE_OPTIONS, type ZoneOption, MIN_ARCH_SIDE, SIZE_STEP, MIN_WALL, OPENING_DEFAULTS, OPENING_FINISHES, OPENING_MARGIN, OPENING_SHAPES, ROOM_TYPES, UNTITLED,
   type BuildingNode, type FloorFinish, type Id, type LevelNode, type NodeOf, type NodeType, type OpeningFinish, type OpeningKind, type OpeningNode,
   type OpeningShape, type OpeningState, type ProjectSettings, type RoomType, type WallLayer, type SceneDoc, type SceneNode, type SlabNode, type Vec2, type WallNode, type ZoneNode,
 } from './types';
@@ -521,11 +521,19 @@ export function wallAt(doc: SceneDoc, levelId: Id, p: Vec2): WallNode | null {
 
 // ---- zones and slabs -----------------------------------------------------------
 
-export interface ZoneInput { points: readonly Vec2[]; name?: string; use?: RoomType; floor?: FloorFinish }
+export interface ZoneInput { points: readonly Vec2[]; name?: string; use?: RoomType; floor?: FloorFinish; option?: ZoneOption }
 
 function floorOf(floor: FloorFinish | undefined) {
   if (floor !== undefined && !FLOOR_KEYS.includes(floor)) throw new SceneError(`Unknown floor finish ${floor}`);
   return floor;
+}
+
+function optionOf(use: RoomType, option: ZoneOption | undefined) {
+  if (option !== undefined && option !== 'standard' && optionFor(use, option) !== option) {
+    const offers = ZONE_OPTIONS[use]?.choices.map(c => c[1].toLowerCase()).join(' or ');
+    throw new SceneError(offers ? `A ${use} is furnished ${offers}` : `A ${use} has no furnishing options`);
+  }
+  return option;
 }
 
 export function addZone(doc: SceneDoc, levelId: Id, input: ZoneInput, id = newId('zone')): [SceneDoc, Id] {
@@ -537,6 +545,7 @@ export function addZone(doc: SceneDoc, levelId: Id, input: ZoneInput, id = newId
     points: polygon(input.points, 'points'),
     use: input.use ?? 'living',
     floor: floorOf(input.floor) ?? 'none',
+    option: optionOf(input.use ?? 'living', input.option) ?? 'standard',
   };
   return [attach(doc, node), id];
 }
@@ -595,10 +604,13 @@ export function translate(doc: SceneDoc, id: Id, d: Vec2): SceneDoc {
   return put(doc, { ...n, points: n.points.map(([x, y]) => [x + dx, y + dy] as Vec2) });
 }
 
-export function updateZone(doc: SceneDoc, id: Id, patch: { name?: string; use?: RoomType; floor?: FloorFinish }): SceneDoc {
+export function updateZone(doc: SceneDoc, id: Id, patch: { name?: string; use?: RoomType; floor?: FloorFinish; option?: ZoneOption }): SceneDoc {
   const z = get(doc, id, 'zone');
   if (patch.use !== undefined && !ROOM_TYPES.includes(patch.use)) throw new SceneError(`Unknown use ${patch.use}`);
-  return put(doc, { ...z, name: patch.name?.trim() || z.name, use: patch.use ?? z.use, floor: floorOf(patch.floor) ?? z.floor });
+  const use = patch.use ?? z.use;
+  // A use that does not offer the room's option puts it back to standard.
+  const option = optionOf(use, patch.option) ?? optionFor(use, z.option);
+  return put(doc, { ...z, name: patch.name?.trim() || z.name, use, floor: floorOf(patch.floor) ?? z.floor, option });
 }
 
 export function updateLevel(doc: SceneDoc, id: Id, patch: { name?: string; elevation?: number; height?: number }): SceneDoc {
@@ -675,7 +687,7 @@ export function migrate(raw: unknown): unknown {
     else if (n?.type === 'opening') {
       const kind = n.kind === 'window' ? 'window' : 'door';
       nodes[id] = { ...n, shape: n.shape ?? 'square', finish: n.finish ?? OPENING_DEFAULTS[kind].finish, state: n.state ?? 'closed', product: n.product ?? null };
-    } else if (n?.type === 'zone') nodes[id] = { ...n, floor: (FLOOR_KEYS as readonly unknown[]).includes(n.floor) ? n.floor : 'none' }; // a finish this version does not have falls back too
+    } else if (n?.type === 'zone') nodes[id] = { ...n, floor: (FLOOR_KEYS as readonly unknown[]).includes(n.floor) ? n.floor : 'none', option: optionFor(n.use as RoomType, n.option) }; // a finish this version does not have falls back too
     else nodes[id] = n;
   }
   const settings = { ...DEFAULT_SETTINGS, ...(typeof (doc as { settings?: unknown }).settings === 'object' ? (doc as { settings: object }).settings : {}) };

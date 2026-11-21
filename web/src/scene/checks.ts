@@ -12,6 +12,7 @@
  */
 import { frameSize, type Id, type OpeningNode, type RoomType, type SceneDoc, type Vec2, type WallNode, type ZoneNode } from './types';
 import { area } from './ops';
+import { furnishLevel } from './furnish';
 import type { Catalogue, Rules } from './catalogue';
 
 export type Severity = 'warning' | 'note';
@@ -126,6 +127,16 @@ export function runChecks(doc: SceneDoc, rules: Rules): Issue[] {
     const here = all.filter(p => p.wall.parent === level && serves(z, p));
     const doors = here.filter(p => p.o.kind === 'door');
     const windows = here.filter(p => p.o.kind === 'window');
+    // A furnishing option the room is too small for is not drawn; say so instead of leaving a choice that does nothing.
+    if (z.option !== 'standard') {
+      const tag = z.option === 'island' ? 'island' : 'sunken-bed';
+      if (!furnishLevel(doc, level).some(p => p.zone === z.id && p.tag === tag)) {
+        add(z.id, 'option', 'note', z.option === 'island'
+          ? `${room} is too small for an island with a 1 m aisle; it is furnished along the wall. Widen the room or choose "Along the wall".`
+          : `${room} has no wall a sunken bed fits against; it has a standard bed. A sunken bed needs its width plus 350 mm of deck each side.`);
+      }
+    }
+    if (z.use === 'pool') continue; // open to the garden: no door, no daylight to count
     if (!doors.length) add(z.id, 'no-door', 'warning', `${room} has no door.`);
     if (z.use === 'bedroom') {
       const escape = windows.some(p => {
@@ -164,9 +175,10 @@ export function runChecks(doc: SceneDoc, rules: Rules): Issue[] {
         const level = doc.nodes[l];
         if (level?.type !== 'level') continue;
         for (const c of level.children) {
+          // walls by their ends, and a pool by its corners: a pool has no walls
           const w = doc.nodes[c];
-          if (w?.type !== 'wall') continue;
-          for (const end of [w.a, w.b]) {
+          const ends = w?.type === 'wall' ? [w.a, w.b] : w?.type === 'zone' && w.use === 'pool' ? w.points : [];
+          for (const end of ends) {
             const p: Vec2 = [end[0] + building.origin[0], end[1] + building.origin[1]];
             const d = Math.min(...plot.map((a, i) => distToSegment(p, a, plot[(i + 1) % plot.length])));
             if (!inside(p) && d > 1e-6) out++;
@@ -174,7 +186,7 @@ export function runChecks(doc: SceneDoc, rules: Rules): Issue[] {
           }
         }
       }
-      if (out) add(building.id, 'outside-plot', 'warning', `${building.name} crosses the plot's boundary: ${out} wall end${out === 1 ? ' is' : 's are'} outside it. Move the building or correct the plot.`);
+      if (out) add(building.id, 'outside-plot', 'warning', `${building.name} crosses the plot's boundary: ${out} corner${out === 1 ? ' is' : 's are'} outside it. Move the building or correct the plot.`);
       else if (nearest < setback - 1e-6) add(building.id, 'setback', 'warning', `${building.name} comes within ${mm(nearest)} mm of the plot's boundary; the project keeps ${mm(setback)} mm clear. Check the setback your permit requires.`);
     }
   }

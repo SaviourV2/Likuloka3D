@@ -75,7 +75,7 @@ function partMaterial(c: string, opts: { roughness?: number; metalness?: number;
 const USE: Record<RoomType, string> = {
   living: '#ffb547', kitchen: '#ff7a59', dining: '#ffd166', bedroom: '#8c7bff',
   bathroom: '#38e1ff', office: '#5cf2a0', hallway: '#7f95bd', laundry: '#4fb8ff',
-  storage: '#c9a77a', studio: '#ff6bd6',
+  storage: '#c9a77a', studio: '#ff6bd6', pool: '#19b5e6',
 };
 
 const zones = new Map<string, THREE.MeshBasicNodeMaterial>();
@@ -96,7 +96,13 @@ function zoneMaterial(use: RoomType, selected: boolean, floor: FloorFinish = 'no
   let m = zones.get(key);
   if (!m) {
     m = new THREE.MeshBasicNodeMaterial({ transparent: true, depthWrite: false, side: THREE.DoubleSide, toneMapped: false });
-    if (floor !== 'none') {
+    if (use === 'pool') {
+      // Water: pool tiles seen through it, 150 mm square, whatever floor the zone was given.
+      const joint = max(step(fract(positionWorld.x.div(0.15)), float(0.1)), step(fract(positionWorld.z.div(0.15)), float(0.1)));
+      const water = mix(color('#27c1ee'), color('#0e86c4'), joint);
+      m.colorNode = selected ? mix(water, color(ACCENT), float(0.35)) : water;
+      m.opacityNode = float(0.92);
+    } else if (floor !== 'none') {
       // A finished floor is solid; selected, it takes the accent and pulses like any zone.
       m.colorNode = selected ? mix(floorColour(floor), color(ACCENT), float(0.3).add(oscSine(time.mul(0.6)).sub(0.5).mul(0.2).mul(motion))) : floorColour(floor);
       m.opacityNode = float(0.96);

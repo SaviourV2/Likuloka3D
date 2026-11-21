@@ -33,7 +33,7 @@ const GUESS: [RegExp, RoomType][] = [
   [/kitchen/i, 'kitchen'], [/dining/i, 'dining'], [/bed|master|guest/i, 'bedroom'],
   [/bath|wc|toilet|shower|ensuite/i, 'bathroom'], [/office|study/i, 'office'],
   [/hall|entry|corridor|foyer/i, 'hallway'], [/laundry|utility/i, 'laundry'],
-  [/storage|store|closet|pantry/i, 'storage'], [/studio/i, 'studio'],
+  [/storage|store|closet|pantry/i, 'storage'], [/studio/i, 'studio'], [/pool|kolam/i, 'pool'],
 ];
 /** A floor the room was given in Roomlines, when this editor has that finish; otherwise the colour of its use. */
 const floorOf = (r: Room): FloorFinish => (FLOOR_KEYS as readonly string[]).includes(r.floor ?? '') ? r.floor as FloorFinish : 'none';
@@ -170,8 +170,8 @@ function outlineOfShapes(rooms: Room[]): Vec2[] {
  * kitchen and dining rooms (drawn here as an open door), a front door on the
  * entry room's longest outside wall, and windows on outside walls by room use.
  */
-const CIRC: Record<RoomType, number> = { hallway: 0, living: 1, studio: 1, dining: 2, kitchen: 3, office: 5, bedroom: 6, laundry: 7, storage: 8, bathroom: 9 };
-const WINDOWS: Record<RoomType, number> = { living: 2, studio: 2, kitchen: 1, dining: 1, bedroom: 1, bathroom: 1, office: 1, laundry: 1, hallway: 0, storage: 0 };
+const CIRC: Record<RoomType, number> = { hallway: 0, living: 1, studio: 1, dining: 2, kitchen: 3, office: 5, bedroom: 6, laundry: 7, storage: 8, bathroom: 9, pool: 10 };
+const WINDOWS: Record<RoomType, number> = { living: 2, studio: 2, kitchen: 1, dining: 1, bedroom: 1, bathroom: 1, office: 1, laundry: 1, hallway: 0, storage: 0, pool: 0 };
 export interface PlannedOpening { kind: 'door' | 'window'; at: Vec2; width: number; height: number; sill: number; open?: boolean }
 export function openingsOf(rooms: Room[]): PlannedOpening[] {
   const uses = rooms.map(useOf), areaOf = (i: number) => Math.abs(signed(cornersOf(rooms[i])));

@@ -61,10 +61,13 @@ export interface WallNode extends Base<'wall'> {
 
 export type RoomType =
   | 'living' | 'kitchen' | 'dining' | 'bedroom' | 'bathroom'
-  | 'office' | 'hallway' | 'laundry' | 'storage' | 'studio';
+  | 'office' | 'hallway' | 'laundry' | 'storage' | 'studio' | 'pool';
 
 /** A floor finish. These are generic finishes drawn by the shader, not products. */
 export type FloorFinish = 'none' | 'oak' | 'walnut' | 'tile-60' | 'tile-60x120' | 'tile-30x60' | 'tile-20' | 'terrazzo' | 'concrete';
+
+/** A choice in how a room is furnished. Which ones a room may have depends on its use (`ZONE_OPTIONS`). */
+export type ZoneOption = 'standard' | 'island' | 'sunken';
 
 export interface ZoneNode extends Base<'zone'> {
   readonly parent: Id;
@@ -72,6 +75,8 @@ export interface ZoneNode extends Base<'zone'> {
   readonly use: RoomType;
   /** The floor finish drawn in the room, or 'none' to show the colour of its use. */
   readonly floor: FloorFinish;
+  /** How the room is furnished, where its use offers a choice: a kitchen with an island, a bedroom with a sunken bed. */
+  readonly option: ZoneOption;
 }
 
 export interface SlabNode extends Base<'slab'> {
@@ -171,8 +176,17 @@ export const UNTITLED = 'Untitled project';
 export const MIN_WALL = GRID;
 export const ROOM_TYPES: readonly RoomType[] = [
   'living', 'kitchen', 'dining', 'bedroom', 'bathroom',
-  'office', 'hallway', 'laundry', 'storage', 'studio',
+  'office', 'hallway', 'laundry', 'storage', 'studio', 'pool',
 ];
+
+/** The choices a room's use offers for how it is furnished. A use not listed here has only 'standard'. */
+export const ZONE_OPTIONS: Partial<Record<RoomType, { label: string; choices: readonly [ZoneOption, string][] }>> = {
+  kitchen: { label: 'Kitchen', choices: [['standard', 'Along the wall'], ['island', 'With an island']] },
+  bedroom: { label: 'Bed', choices: [['standard', 'Standard bed'], ['sunken', 'Sunken bed']] },
+  studio: { label: 'Bed', choices: [['standard', 'Standard bed'], ['sunken', 'Sunken bed']] },
+};
+/** The option a room may have for its use: the one asked for if the use offers it, otherwise 'standard'. */
+export const optionFor = (use: RoomType, option: unknown): ZoneOption => ZONE_OPTIONS[use]?.choices.find(c => c[0] === option)?.[0] ?? 'standard';
 
 /** The frame that fits a structural opening: smaller by the fitting gap each side, and at a door's head. */
 export function frameSize(o: { kind: OpeningKind; width: number; height: number }, tolerance: number) {

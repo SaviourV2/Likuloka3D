@@ -26,7 +26,7 @@ const INK = '#10142b';
 const ACCENT = '#1428a0';
 const FILL: Record<string, string> = {
   living: '#f0b45a', kitchen: '#e98a5c', dining: '#d9a35f', bedroom: '#8fa4ef', bathroom: '#6cc3cf',
-  office: '#9dc26f', hallway: '#c9cbd6', laundry: '#86b9d9', storage: '#b5a58f', studio: '#c08ad8',
+  office: '#9dc26f', hallway: '#c9cbd6', laundry: '#86b9d9', storage: '#b5a58f', studio: '#c08ad8', pool: '#5fc4ea',
 };
 
 const esc = (s: string) => s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));

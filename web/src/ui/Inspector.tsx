@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { addZone, area, centreOnPlot, plotAround, removePlotCorner, rename, setPlot, updateSettings, setWallLength, updateLevel, updateOpening, updateSlab, updateWall, updateZone } from '@/scene/ops';
 import { commit, isClient, removeSelected, useEditor } from '@/scene/store';
-import { FLOOR_FINISHES, FLOOR_KEYS, type FloorFinish, FINISH_LABELS, frameSize, OPENING_FINISHES, ROOM_TYPES, type OpeningFinish, type OpeningNode, type RoomType, type SceneDoc, type SceneNode, type Vec2, type WallNode } from '@/scene/types';
+import { FLOOR_FINISHES, FLOOR_KEYS, ZONE_OPTIONS, type ZoneOption, type FloorFinish, FINISH_LABELS, frameSize, OPENING_FINISHES, ROOM_TYPES, type OpeningFinish, type OpeningNode, type RoomType, type SceneDoc, type SceneNode, type Vec2, type WallNode } from '@/scene/types';
 import { applyProduct, applyWallType, formatPrice, productFor, wallTypeFor } from '@/scene/catalogue';
 import { checks } from '@/scene/checks';
 import { FINISH_SWATCH, USE_COLOURS } from '@/ecs/materials';
@@ -122,6 +122,7 @@ function Selected({ node, error }: { node: SceneNode; error: string | null }) {
           <Mm label="Floor height" hint="Height of this floor above the ground" value={node.elevation} step={50} onCommit={v => edit(d => updateLevel(d, id, { elevation: v }), 'Change floor height')} />
           <Mm label="Storey height" hint="From this floor to the next" value={node.height} step={50} onCommit={v => edit(d => updateLevel(d, id, { height: v }), 'Change storey height')} />
           <button type="button" className="add" onClick={() => edit(d => addZone(d, id, { name: 'New zone', points: [[0, 0], [3, 0], [3, 3], [0, 3]] })[0], 'Add zone')}>+ Zone</button>
+          <button type="button" className="add" data-action="add-pool" title="A swimming pool, 8 × 4 m, beside the building. Drag it into place and reshape it by its corners." onClick={() => edit(d => addZone(d, id, { name: 'Pool', use: 'pool', points: poolBeside(d, id) })[0], 'Add pool')}>+ Pool</button>
         </div>
       )}
       {node.type === 'wall' && (
@@ -149,6 +150,15 @@ function Selected({ node, error }: { node: SceneNode; error: string | null }) {
             </select>
             <i className="swatch" style={{ background: node.floor === 'none' ? USE_COLOURS[node.use] : FLOOR_FINISHES[node.floor].base }} aria-hidden="true" />
           </label>
+          {ZONE_OPTIONS[node.use] && (
+            <label className="field wide">
+              <span>{ZONE_OPTIONS[node.use]!.label}</span>
+              <select value={node.option} aria-label="Furnishing option" onChange={e => edit(d => updateZone(d, id, { option: e.target.value as ZoneOption }), 'Change furnishing')}>
+                {ZONE_OPTIONS[node.use]!.choices.map(([k, label]) => <option key={k} value={k}>{label}</option>)}
+              </select>
+              <i aria-hidden="true" />
+            </label>
+          )}
           <RoomSize points={node.points} />
         </div>
       )}
@@ -323,6 +333,14 @@ function PlotPanel({ error }: { error: string | null }) {
       {error && <p className="error" role="alert">{error}</p>}
     </aside>
   );
+}
+
+/** Where a new pool goes: 8 × 4 m, two metres to the right of everything on the level. */
+function poolBeside(doc: SceneDoc, levelId: string): Vec2[] {
+  const level = doc.nodes[levelId];
+  const pts = level?.type === 'level' ? level.children.flatMap(c => { const n = doc.nodes[c]; return n?.type === 'wall' ? [n.a, n.b] : n?.type === 'zone' || n?.type === 'slab' ? [...n.points] : []; }) : [];
+  const x = pts.length ? Math.max(...pts.map(p => p[0])) + 2 : 0, y = pts.length ? Math.min(...pts.map(p => p[1])) : 0;
+  return [[x, y], [x + 8, y], [x + 8, y + 4], [x, y + 4]];
 }
 
 function RoomSize({ points }: { points: readonly Vec2[] }) {

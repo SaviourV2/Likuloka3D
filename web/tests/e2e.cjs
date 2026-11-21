@@ -898,6 +898,54 @@ async function drag(page, level, grab, by, lift = 0) {
     await c.close();
   }
 
+  // ---- pool, island kitchen, sunken bed -------------------------------------------------------
+  {
+    const { page: f, context: c, errors } = await open(browser, url);
+    const made = await f.evaluate(() => {
+      likuloka.importRoomlines({ name: 'Villa', rooms: [
+        { name: 'Living', type: 'living', x: 0, y: 0, w: 6, h: 5 }, { name: 'Kitchen', type: 'kitchen', x: 6, y: 0, w: 5, h: 5 },
+        { name: 'Master', type: 'bedroom', x: 0, y: 5, w: 5, h: 4.5 }, { name: 'Bath', type: 'bathroom', x: 5, y: 5, w: 2.5, h: 4.5 }, { name: 'Pantry', type: 'kitchen', x: 7.5, y: 5, w: 3.5, h: 2 }] }, { openings: true });
+      const d = likuloka.getDoc(), b = d.nodes[d.roots[d.roots.length - 1]], l = d.nodes[b.children[0]];
+      const zs = l.children.map(k => d.nodes[k]).filter(n => n.type === 'zone'), by = n => zs.find(z => z.name === n).id;
+      return { level: l.id, kitchen: by('Kitchen'), master: by('Master'), pantry: by('Pantry'), bath: by('Bath'), option: zs.map(z => z.option).join() };
+    });
+    ok('rooms start furnished the standard way', made.option === 'standard,standard,standard,standard,standard', made.option);
+    const tags = () => f.evaluate(l => likuloka.furnish(l).filter(p => p.tag).map(p => p.zone + ':' + p.tag), made.level);
+    await f.evaluate(i => likuloka.select(i), made.kitchen);
+    await f.selectOption('.inspector select[aria-label="Furnishing option"]', 'island');
+    ok('a kitchen can be given an island', (await tags()).includes(made.kitchen + ':island'));
+    await f.evaluate(i => likuloka.select(i), made.master);
+    await f.selectOption('.inspector select[aria-label="Furnishing option"]', 'sunken');
+    ok('a bedroom can be given a sunken bed', (await tags()).includes(made.master + ':sunken-bed'));
+    await f.evaluate(i => likuloka.select(i), made.bath);
+    ok('a bathroom offers no furnishing option', (await f.locator('.inspector select[aria-label="Furnishing option"]').count()) === 0);
+    const wrong = await f.evaluate(i => ({ r: likuloka.commit(d => likuloka.ops.updateZone(d, i, { option: 'island' }), 'o'), err: likuloka.getState().error }), made.bath);
+    ok('and refuses one', !wrong.r && /no furnishing options/.test(wrong.err), wrong);
+    const small = await f.evaluate(i => { likuloka.commit(d => likuloka.ops.updateZone(d, i, { option: 'island' }), 'o'); return likuloka.checks().filter(k => k.rule === 'option' && k.node === i).map(k => k.severity); }, made.pantry);
+    ok('a kitchen too small for an island says so in a note, and keeps its furniture', small.join() === 'note' && !(await tags()).includes(made.pantry + ':island'), small);
+    const reset = await f.evaluate(i => { likuloka.commit(d => likuloka.ops.updateZone(d, i, { use: 'office' }), 'u'); return likuloka.getDoc().nodes[i].option; }, made.kitchen);
+    ok('changing a room to a use without the option puts it back to standard', reset === 'standard', reset);
+    // a pool
+    await f.evaluate(i => likuloka.select(i), made.level);
+    await f.click('[data-action="add-pool"]');
+    await frames(f);
+    const pool = await f.evaluate(l => {
+      const d = likuloka.getDoc(), z = d.nodes[l].children.map(k => d.nodes[k]).find(n => n.type === 'zone' && n.use === 'pool');
+      return z && { id: z.id, pieces: likuloka.furnish(l).filter(p => p.zone === z.id).length, issues: likuloka.checks().filter(i => i.node === z.id).map(i => i.rule) };
+    }, made.level);
+    ok('+ Pool adds a pool with its coping, and no door or daylight warnings', pool && pool.pieces >= 4 && pool.issues.length === 0, pool);
+    const outside = await f.evaluate(() => { likuloka.commit(d => likuloka.ops.plotAround(d, 2), 'Plot'); const before = likuloka.checks().filter(i => i.rule === 'outside-plot').length; likuloka.commit(d => { const z = Object.values(d.nodes).find(n => n.type === 'zone' && n.use === 'pool'); return likuloka.ops.translate(d, z.id, [10, 0]); }, 'Move'); return [before, likuloka.checks().filter(i => i.rule === 'outside-plot').length]; });
+    ok('a pool moved across the plot boundary is warned about', outside[0] === 0 && outside[1] === 1, outside);
+    await f.evaluate(() => likuloka.setRole({ kind: 'client', fixed: false }));
+    ok('a client can choose a furnishing option', await f.evaluate(i => likuloka.commit(d => likuloka.ops.updateZone(d, i, { option: 'standard' }), 'o'), made.master));
+    await f.evaluate(() => likuloka.setRole({ kind: 'designer' }));
+    const old = await f.evaluate(i => { const d = JSON.parse(JSON.stringify(likuloka.getDoc())); delete d.nodes[i].option; return likuloka.load(d) && likuloka.getDoc().nodes[i].option; }, made.master);
+    ok('a project saved before furnishing options opens as standard', old === 'standard', old);
+    await frames(f);
+    ok('no page errors with pools and options', errors.length === 0, errors.slice(0, 5));
+    await c.close();
+  }
+
   // ---- glass and the grid ---------------------------------------------------------------------
   {
     const { page: g, context: c, errors } = await open(browser, url);
