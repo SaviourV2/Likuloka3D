@@ -12,9 +12,10 @@
  */
 import * as THREE from 'three/webgpu';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import { furnishLevel, type FurnitureBox, type FurnitureModel } from '@/scene/furnish';
+import { furnishLevel, wallSkins, type FurnitureBox, type FurnitureModel } from '@/scene/furnish';
+import { WALL_PAINTS } from '@/scene/types';
 import type { Id, ItemNode, SceneDoc } from '@/scene/types';
-import { CUT, UNIT_BOX } from './materials';
+import { CUT, UNIT_BOX, wallTileMaterial } from './materials';
 
 export const MODEL_NAMES = [
   'bathroomCabinetDrawer', 'bathroomMirror', 'bathtub', 'bedDouble', 'bedSingle', 'bookcaseClosedDoors', 'bookcaseOpen',
@@ -37,13 +38,13 @@ class Furniture {
   /** Where the model files are: not asked for yet, on their way, loaded, or not there (boxes are drawn). */
   models: 'idle' | 'loading' | 'ready' | 'missing' = 'idle';
   /** What the last redraw drew, for the tests and the status line. */
-  stats = { pieces: 0, models: 0, boxes: 0, redraws: 0 };
+  stats = { pieces: 0, models: 0, boxes: 0, skins: 0, redraws: 0 };
   private lib = new Map<string, Source>();
   private groups = new Map<Id, THREE.Group>();
   /** The objects each level's furniture was last worked out from. */
   private seen = new Map<Id, unknown[]>();
   private shown: { on: boolean; cut: boolean; models: string } = { on: false, cut: true, models: 'idle' };
-  private counts = new Map<Id, { pieces: number; models: number; boxes: number }>();
+  private counts = new Map<Id, { pieces: number; models: number; boxes: number; skins: number }>();
   private flat = new Map<number, THREE.MeshStandardMaterial>();
   private lit = new Map<string, THREE.Material>();
   private glass = new THREE.MeshStandardMaterial({ color: 0xbfe4f2, transparent: true, opacity: 0.3, roughness: 0.05, depthWrite: false });
@@ -98,8 +99,8 @@ class Furniture {
       drew = true;
     }
     if (drew) {
-      const t = { pieces: 0, models: 0, boxes: 0 };
-      for (const c of this.counts.values()) { t.pieces += c.pieces; t.models += c.models; t.boxes += c.boxes; }
+      const t = { pieces: 0, models: 0, boxes: 0, skins: 0 };
+      for (const c of this.counts.values()) { t.pieces += c.pieces; t.models += c.models; t.boxes += c.boxes; t.skins += c.skins; }
       this.stats = { ...t, redraws: this.stats.redraws + 1 };
     }
     return drew;
@@ -107,8 +108,19 @@ class Furniture {
 
   private draw(group: THREE.Group, doc: SceneDoc, level: Id, on: boolean, cut: boolean) {
     group.clear(); // geometries and materials are shared, so there is nothing to dispose
-    const count = { pieces: 0, models: 0, boxes: 0 };
+    const count = { pieces: 0, models: 0, boxes: 0, skins: 0 };
     this.counts.set(level, count);
+    // Paint and tiles are part of the room, so they are drawn whether or not furniture is shown.
+    for (const s of wallSkins(doc, level)) {
+      const z1 = cut ? Math.min(s.z1, CUT) : s.z1;
+      if (z1 - s.z0 < 0.005) continue;
+      const mesh = new THREE.Mesh(UNIT_BOX, s.tile !== 'none' ? wallTileMaterial(s.tile) : this.colour(new THREE.Color(WALL_PAINTS[s.paint as Exclude<typeof s.paint, 'none'>].colour).getHex()));
+      mesh.scale.set(s.len, z1 - s.z0, 0.012);
+      mesh.position.set(s.cx, (s.z0 + z1) / 2, s.cz);
+      mesh.rotation.y = s.yaw;
+      mesh.receiveShadow = true; mesh.raycast = () => {};
+      group.add(mesh); count.skins++;
+    }
     if (!on) return;
     // With the walls cut, what hangs above the cut (upper cabinets, mirrors) is left out, like the walls it hangs on.
     const hidden = (z0: number) => cut && z0 >= CUT - 0.2;

@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { addZone, area, updateItem, centreOnPlot, plotAround, removePlotCorner, rename, setPlot, updateSettings, setWallLength, updateLevel, updateOpening, updateSlab, updateWall, updateZone } from '@/scene/ops';
 import { commit, isClient, patchUnderlay, removeSelected, scaleUnderlay, setInteraction, setUnderlay, useEditor } from '@/scene/store';
 import { fromDxf, importDxf, parseDxf, PLOT_LAYER, ROOM_LAYER, type DxfChoice, type DxfDrawing, type DxfUnit } from '@/scene/dxfin';
-import { FLOOR_FINISHES, FLOOR_KEYS, ZONE_OPTIONS, type ZoneOption, type FloorFinish, FINISH_LABELS, frameSize, OPENING_FINISHES, ROOM_TYPES, type OpeningFinish, type OpeningNode, type RoomType, type SceneDoc, type SceneNode, type Vec2, type WallNode } from '@/scene/types';
+import { FLOOR_FINISHES, FLOOR_KEYS, PAINT_KEYS, TILE_KEYS, TILE_HEIGHTS, WALL_PAINTS, WALL_TILES, type WallPaint, type WallTile, ZONE_OPTIONS, type ZoneOption, type FloorFinish, FINISH_LABELS, frameSize, OPENING_FINISHES, ROOM_TYPES, type OpeningFinish, type OpeningNode, type RoomType, type SceneDoc, type SceneNode, type Vec2, type WallNode } from '@/scene/types';
 import { applyProduct, applyWallType, formatPrice, productFor, wallTypeFor } from '@/scene/catalogue';
 import { checks } from '@/scene/checks';
 import { ownFurniture } from '@/scene/assets';
@@ -155,6 +155,31 @@ function Selected({ node, error }: { node: SceneNode; error: string | null }) {
             </select>
             <i className="swatch" style={{ background: node.floor === 'none' ? USE_COLOURS[node.use] : FLOOR_FINISHES[node.floor].base }} aria-hidden="true" />
           </label>
+          {node.use !== 'pool' && <>
+            <label className="field wide">
+              <span>Walls</span>
+              <select value={node.paint} aria-label="Wall paint" onChange={e => edit(d => updateZone(d, id, { paint: e.target.value as WallPaint }), 'Change wall paint')}>
+                {PAINT_KEYS.map(k => <option key={k} value={k}>{k === 'none' ? 'As built' : WALL_PAINTS[k].label}</option>)}
+              </select>
+              <i className="swatch" style={{ background: node.paint === 'none' ? '#c9d6ee' : WALL_PAINTS[node.paint].colour }} aria-hidden="true" />
+            </label>
+            <label className="field wide">
+              <span>Wall tile</span>
+              <select value={node.tile} aria-label="Wall tile" onChange={e => edit(d => updateZone(d, id, { tile: e.target.value as WallTile }), 'Change wall tile')}>
+                {TILE_KEYS.map(k => <option key={k} value={k}>{k === 'none' ? 'None' : WALL_TILES[k].label}</option>)}
+              </select>
+              <i className="swatch" style={{ background: node.tile === 'none' ? 'transparent' : WALL_TILES[node.tile].base }} aria-hidden="true" />
+            </label>
+            {node.tile !== 'none' && (
+              <label className="field wide">
+                <span>Tiled</span>
+                <select value={node.tileTo} aria-label="Tile height" onChange={e => edit(d => updateZone(d, id, { tileTo: Number(e.target.value) }), 'Change tile height')}>
+                  {TILE_HEIGHTS.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
+                </select>
+                <i aria-hidden="true" />
+              </label>
+            )}
+          </>}
           {ZONE_OPTIONS[node.use] && (
             <label className="field wide">
               <span>{ZONE_OPTIONS[node.use]!.label}</span>

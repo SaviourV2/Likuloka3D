@@ -4,7 +4,7 @@
  * is what dirty tracking and undo rely on. Invalid input throws a SceneError.
  */
 import {
-  DEFAULT_SETTINGS, FLOOR_KEYS, GRID, optionFor, ZONE_OPTIONS, type ZoneOption, MIN_ARCH_SIDE, SIZE_STEP, MIN_WALL, OPENING_DEFAULTS, OPENING_FINISHES, OPENING_MARGIN, OPENING_SHAPES, ROOM_TYPES, UNTITLED,
+  DEFAULT_SETTINGS, FLOOR_KEYS, PAINT_KEYS, TILE_KEYS, TILE_HEIGHTS, type WallPaint, type WallTile, GRID, optionFor, ZONE_OPTIONS, type ZoneOption, MIN_ARCH_SIDE, SIZE_STEP, MIN_WALL, OPENING_DEFAULTS, OPENING_FINISHES, OPENING_MARGIN, OPENING_SHAPES, ROOM_TYPES, UNTITLED,
   type BuildingNode, type FloorFinish, type Id, type ItemModel, type ItemNode, type ItemPart, type LevelNode, type NodeOf, type NodeType, type OpeningFinish, type OpeningKind, type OpeningNode,
   type OpeningShape, type OpeningState, type ProjectSettings, type RoomType, type WallLayer, type SceneDoc, type SceneNode, type SlabNode, type Vec2, type WallNode, type ZoneNode,
 } from './types';
@@ -528,6 +528,15 @@ function floorOf(floor: FloorFinish | undefined) {
   return floor;
 }
 
+function wallFinish<T extends string>(v: T | undefined, keys: readonly T[], what: string) {
+  if (v !== undefined && !keys.includes(v)) throw new SceneError(`Unknown ${what} ${v}`);
+  return v;
+}
+function tileHeight(v: number | undefined) {
+  if (v !== undefined && !TILE_HEIGHTS.some(h => h[0] === v)) throw new SceneError('Tiles go to 900 mm, 1200 mm or the full height');
+  return v;
+}
+
 function optionOf(use: RoomType, option: ZoneOption | undefined) {
   if (option !== undefined && option !== 'standard' && optionFor(use, option) !== option) {
     const offers = ZONE_OPTIONS[use]?.choices.map(c => c[1].toLowerCase()).join(' or ');
@@ -547,6 +556,7 @@ export function addZone(doc: SceneDoc, levelId: Id, input: ZoneInput, id = newId
     floor: floorOf(input.floor) ?? 'none',
     option: optionOf(input.use ?? 'living', input.option) ?? 'standard',
     auto: true,
+    paint: 'none', tile: 'none', tileTo: 0,
   };
   return [attach(doc, node), id];
 }
@@ -644,13 +654,14 @@ export function translate(doc: SceneDoc, id: Id, d: Vec2): SceneDoc {
   return put(doc, { ...n, points: n.points.map(([x, y]) => [x + dx, y + dy] as Vec2) });
 }
 
-export function updateZone(doc: SceneDoc, id: Id, patch: { name?: string; use?: RoomType; floor?: FloorFinish; option?: ZoneOption; auto?: boolean }): SceneDoc {
+export function updateZone(doc: SceneDoc, id: Id, patch: { name?: string; use?: RoomType; floor?: FloorFinish; option?: ZoneOption; auto?: boolean; paint?: WallPaint; tile?: WallTile; tileTo?: number }): SceneDoc {
   const z = get(doc, id, 'zone');
   if (patch.use !== undefined && !ROOM_TYPES.includes(patch.use)) throw new SceneError(`Unknown use ${patch.use}`);
   const use = patch.use ?? z.use;
   // A use that does not offer the room's option puts it back to standard.
   const option = optionOf(use, patch.option) ?? optionFor(use, z.option);
-  return put(doc, { ...z, name: patch.name?.trim() || z.name, use, floor: floorOf(patch.floor) ?? z.floor, option, auto: patch.auto ?? z.auto });
+  return put(doc, { ...z, name: patch.name?.trim() || z.name, use, floor: floorOf(patch.floor) ?? z.floor, option, auto: patch.auto ?? z.auto,
+    paint: wallFinish(patch.paint, PAINT_KEYS, 'paint') ?? z.paint, tile: wallFinish(patch.tile, TILE_KEYS, 'wall tile') ?? z.tile, tileTo: tileHeight(patch.tileTo) ?? z.tileTo });
 }
 
 export function updateLevel(doc: SceneDoc, id: Id, patch: { name?: string; elevation?: number; height?: number }): SceneDoc {
@@ -727,7 +738,8 @@ export function migrate(raw: unknown): unknown {
     else if (n?.type === 'opening') {
       const kind = n.kind === 'window' ? 'window' : 'door';
       nodes[id] = { ...n, shape: n.shape ?? 'square', finish: n.finish ?? OPENING_DEFAULTS[kind].finish, state: n.state ?? 'closed', product: n.product ?? null };
-    } else if (n?.type === 'zone') nodes[id] = { ...n, floor: (FLOOR_KEYS as readonly unknown[]).includes(n.floor) ? n.floor : 'none', option: optionFor(n.use as RoomType, n.option), auto: n.auto !== false }; // a finish this version does not have falls back too
+    } else if (n?.type === 'zone') nodes[id] = { ...n, floor: (FLOOR_KEYS as readonly unknown[]).includes(n.floor) ? n.floor : 'none', option: optionFor(n.use as RoomType, n.option), auto: n.auto !== false,
+      paint: (PAINT_KEYS as readonly unknown[]).includes(n.paint) ? n.paint : 'none', tile: (TILE_KEYS as readonly unknown[]).includes(n.tile) ? n.tile : 'none', tileTo: TILE_HEIGHTS.some(h => h[0] === n.tileTo) ? n.tileTo : 0 }; // a finish this version does not have falls back too
     else nodes[id] = n;
   }
   const settings = { ...DEFAULT_SETTINGS, ...(typeof (doc as { settings?: unknown }).settings === 'object' ? (doc as { settings: object }).settings : {}) };

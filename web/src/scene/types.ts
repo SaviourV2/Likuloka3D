@@ -66,6 +66,29 @@ export type RoomType =
 /** A floor finish. These are generic finishes drawn by the shader, not products. */
 export type FloorFinish = 'none' | 'oak' | 'walnut' | 'tile-60' | 'tile-60x120' | 'tile-30x60' | 'tile-20' | 'terrazzo' | 'concrete';
 
+/** A wall paint. Generic colours, not a manufacturer's range. */
+export type WallPaint = 'none' | 'warm-white' | 'linen' | 'sand' | 'clay' | 'sage' | 'pale-blue' | 'olive-grey' | 'charcoal';
+export const WALL_PAINTS: Record<Exclude<WallPaint, 'none'>, { label: string; colour: string }> = {
+  'warm-white': { label: 'Warm white', colour: '#f2f0eb' }, 'linen': { label: 'Linen', colour: '#e8e2d6' }, 'sand': { label: 'Sand', colour: '#d9d2c3' },
+  'clay': { label: 'Clay blush', colour: '#e6d3cc' }, 'sage': { label: 'Sage mist', colour: '#cfd8d3' }, 'pale-blue': { label: 'Pale blue', colour: '#c9d6e2' },
+  'olive-grey': { label: 'Olive grey', colour: '#b7bfae' }, 'charcoal': { label: 'Charcoal', colour: '#4a4f55' },
+};
+export const PAINT_KEYS = ['none', ...Object.keys(WALL_PAINTS)] as readonly WallPaint[];
+
+/** A wall tile: its colour, its joints, and one tile's width and height in metres. `bond` lays alternate rows half a tile along. */
+export type WallTile = 'none' | 'tile-30x60' | 'tile-60' | 'tile-20' | 'subway' | 'subway-green' | 'terrazzo';
+export const WALL_TILES: Record<Exclude<WallTile, 'none'>, { label: string; base: string; joint: string; size: readonly [number, number]; bond?: boolean }> = {
+  'tile-30x60': { label: 'Tile 60 × 30, white', base: '#eef0ef', joint: '#9ea5a5', size: [0.6, 0.3] },
+  'tile-60': { label: 'Tile 60 × 60, warm grey', base: '#d9d6cf', joint: '#8f8b83', size: [0.6, 0.6] },
+  'tile-20': { label: 'Tile 20 × 20, blue-grey', base: '#cfdde2', joint: '#7f96a0', size: [0.2, 0.2] },
+  'subway': { label: 'Subway tile 15 × 7.5, white', base: '#f3f2ee', joint: '#a9a6a0', size: [0.15, 0.075], bond: true },
+  'subway-green': { label: 'Subway tile 15 × 7.5, sage', base: '#9db3a2', joint: '#e3e6df', size: [0.15, 0.075], bond: true },
+  'terrazzo': { label: 'Terrazzo', base: '#d8d2c8', joint: '#d8d2c8', size: [0, 0] },
+};
+export const TILE_KEYS = ['none', ...Object.keys(WALL_TILES)] as readonly WallTile[];
+/** The heights tiles may stop at; 0 is the full height of the wall. */
+export const TILE_HEIGHTS: readonly [number, string][] = [[0, 'Full height'], [1.2, 'Up to 1200 mm'], [0.9, 'Up to 900 mm']];
+
 /** A choice in how a room is furnished. Which ones a room may have depends on its use (`ZONE_OPTIONS`). */
 export type ZoneOption = 'standard' | 'island' | 'sunken';
 
@@ -75,6 +98,12 @@ export interface ZoneNode extends Base<'zone'> {
   readonly use: RoomType;
   /** The floor finish drawn in the room, or 'none' to show the colour of its use. */
   readonly floor: FloorFinish;
+  /** The paint on the room's side of its walls, or 'none' for the wall's own colour. */
+  readonly paint: WallPaint;
+  /** Tiles on the room's side of its walls, or 'none'. */
+  readonly tile: WallTile;
+  /** How high the tiles go, in metres from the floor; 0 for the full height. */
+  readonly tileTo: number;
   /** How the room is furnished, where its use offers a choice: a kitchen with an island, a bedroom with a sunken bed. */
   readonly option: ZoneOption;
   /** Whether the room is furnished automatically from its use. Off once its furniture has been made into items. */

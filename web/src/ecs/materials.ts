@@ -14,8 +14,8 @@
  * costs no shader compile after the first use.
  */
 import * as THREE from 'three/webgpu';
-import { color, float, fract, max, min, mix, modelScale, oscSine, positionLocal, positionWorld, smoothstep, step, time, uniform, userData, vec3 } from 'three/tsl';
-import { FLOOR_FINISHES, type FloorFinish, type OpeningFinish, type RoomType } from '@/scene/types';
+import { color, float, floor, fract, max, min, mod, mix, modelScale, oscSine, positionLocal, positionWorld, smoothstep, step, time, uniform, userData, vec3 } from 'three/tsl';
+import { FLOOR_FINISHES, WALL_TILES, type WallTile, type FloorFinish, type OpeningFinish, type RoomType } from '@/scene/types';
 
 /** One unit cube shared by every wall piece and door or window part; each is scaled into place. */
 export const UNIT_BOX = new THREE.BoxGeometry(1, 1, 1);
@@ -77,6 +77,27 @@ const USE: Record<RoomType, string> = {
   bathroom: '#38e1ff', office: '#5cf2a0', hallway: '#7f95bd', laundry: '#4fb8ff',
   storage: '#c9a77a', studio: '#ff6bd6', pool: '#19b5e6', garage: '#9aa7b8',
 };
+
+const wallTiles = new Map<string, THREE.MeshStandardNodeMaterial>();
+/**
+ * Tiles on a wall panel. The panel is the unit box scaled to its length and
+ * height, so the joints are laid out along it from its own coordinates and
+ * up it from world height, which keeps rows level across a room.
+ */
+export function wallTileMaterial(tile: Exclude<WallTile, 'none'>) {
+  let m = wallTiles.get(tile);
+  if (!m) {
+    const t = WALL_TILES[tile], [w, h] = t.size;
+    m = new THREE.MeshStandardNodeMaterial({ roughness: 0.35, metalness: 0 });
+    if (!w) m.colorNode = color(t.base);
+    else {
+      const row = positionWorld.y.div(h), along = positionLocal.x.mul(modelScale.x).div(w).add(t.bond ? mod(floor(row), float(2)).mul(0.5) : float(0));
+      m.colorNode = mix(color(t.base), color(t.joint), max(step(fract(along), float(0.006 / w)), step(fract(row), float(0.006 / h))));
+    }
+    wallTiles.set(tile, m);
+  }
+  return m;
+}
 
 const zones = new Map<string, THREE.MeshBasicNodeMaterial>();
 /** Joints are drawn this wide, in metres: wider than real ones, so they still show from above the house. */

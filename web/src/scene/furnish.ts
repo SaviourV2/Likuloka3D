@@ -16,7 +16,7 @@
  * A room is measured to the inside faces of its walls: each edge of the zone
  * is moved in by half the thickness of the wall on it.
  */
-import type { Id, ItemNode, OpeningNode, RoomType, SceneDoc, WallNode, ZoneNode, ZoneOption } from './types';
+import type { Id, ItemNode, OpeningNode, RoomType, SceneDoc, WallNode, WallPaint, WallTile, ZoneNode, ZoneOption } from './types';
 
 type Pt = [number, number];
 /** A box of a piece: from a0 to a1 along the wall, d0 to d1 out from it, z0 to z1 up, its colour and its shape. */
@@ -352,17 +352,19 @@ export function inset(P: Pt[], by: number[]): Pt[] {
   });
 }
 
-/** Half the thickness of the wall an edge of a room lies on, or 0 when no wall does. */
-function wallOn(A: Pt, B: Pt, walls: WallNode[]): number {
+/** The wall an edge of a room lies on, if any. */
+function wallAt(A: Pt, B: Pt, walls: WallNode[]): WallNode | null {
   const m: Pt = [(A[0] + B[0]) / 2, (A[1] + B[1]) / 2], len = Math.hypot(B[0] - A[0], B[1] - A[1]) || 1e-9, u: Pt = [(B[0] - A[0]) / len, (B[1] - A[1]) / len];
   for (const w of walls) {
     const wl = Math.hypot(w.b[0] - w.a[0], w.b[1] - w.a[1]) || 1e-9, wu: Pt = [(w.b[0] - w.a[0]) / wl, (w.b[1] - w.a[1]) / wl];
     if (Math.abs(u[0] * wu[1] - u[1] * wu[0]) > 2e-3) continue;
     const dx = m[0] - w.a[0], dy = m[1] - w.a[1], t = dx * wu[0] + dy * wu[1];
-    if (Math.abs(dx * wu[1] - dy * wu[0]) < 0.02 && t > -0.02 && t < wl + 0.02) return w.thickness / 2;
+    if (Math.abs(dx * wu[1] - dy * wu[0]) < 0.02 && t > -0.02 && t < wl + 0.02) return w;
   }
-  return 0;
+  return null;
 }
+/** Half the thickness of the wall an edge of a room lies on, or 0 when no wall does. */
+const wallOn = (A: Pt, B: Pt, walls: WallNode[]) => (wallAt(A, B, walls)?.thickness ?? 0) / 2;
 
 /** A zone as the room the recipes furnish: measured to the inside faces of its walls. */
 function roomOf(z: ZoneNode, walls: WallNode[]): Room | null {
@@ -374,6 +376,58 @@ function roomOf(z: ZoneNode, walls: WallNode[]): Room | null {
   const x = Math.min(...xs), y = Math.min(...ys), w = Math.max(...xs) - x, h = Math.max(...ys) - y;
   const box = P.length === 4 && P.every(q => (Math.abs(q[0] - x) < 1e-6 || Math.abs(q[0] - x - w) < 1e-6) && (Math.abs(q[1] - y) < 1e-6 || Math.abs(q[1] - y - h) < 1e-6)) && Math.abs(signedArea(P) - w * h) < 1e-6;
   return box ? { x, y, w, h } : { x, y, w, h, points: P };
+}
+
+/** A flat panel on the room's side of a wall: where it is, how long and tall, and what it shows. */
+export interface WallSkin { zone: Id; cx: number; cz: number; len: number; yaw: number; z0: number; z1: number; paint: WallPaint; tile: WallTile }
+
+/**
+ * The paint and tiles of a level's rooms, as panels on the inside faces of
+ * their walls, cut round every door and window. A room's tiles run from the
+ * floor to `tileTo`, and its paint from there up.
+ */
+export function wallSkins(doc: SceneDoc, levelId: Id): WallSkin[] {
+  const level = doc.nodes[levelId];
+  if (level?.type !== 'level') return [];
+  const kids = level.children.map(c => doc.nodes[c]), walls = kids.filter((n): n is WallNode => n?.type === 'wall');
+  const out: WallSkin[] = [];
+  for (const z of kids) {
+    if (z?.type !== 'zone' || (z.paint === 'none' && z.tile === 'none')) continue;
+    let P = z.points.map(p => [p[0], p[1]] as Pt);
+    if (signedArea(P) < 0) P.reverse();
+    const on = P.map((A, i) => wallAt(A, P[(i + 1) % P.length], walls));
+    const In = inset(P, on.map(w => (w?.thickness ?? 0) / 2));
+    P.forEach((_, i) => {
+      const wall = on[i];
+      if (!wall) return;
+      const A = In[i], B = In[(i + 1) % In.length], len = Math.hypot(B[0] - A[0], B[1] - A[1]);
+      if (len < 0.05) return;
+      const u: Pt = [(B[0] - A[0]) / len, (B[1] - A[1]) / len], n: Pt = [-u[1], u[0]], H = wall.height;
+      const wl = Math.hypot(wall.b[0] - wall.a[0], wall.b[1] - wall.a[1]) || 1e-9, wu: Pt = [(wall.b[0] - wall.a[0]) / wl, (wall.b[1] - wall.a[1]) / wl];
+      // each opening as a span along this edge and a height band
+      const holes = wall.children.map(c => doc.nodes[c]).filter((o): o is OpeningNode => o?.type === 'opening').map(o => {
+        const c: Pt = [wall.a[0] + wu[0] * o.offset, wall.a[1] + wu[1] * o.offset], t = (c[0] - A[0]) * u[0] + (c[1] - A[1]) * u[1];
+        return { t0: Math.max(0, t - o.width / 2), t1: Math.min(len, t + o.width / 2), z0: o.sill, z1: Math.min(H, o.sill + o.height) };
+      }).filter(h => h.t1 - h.t0 > 0.01).sort((p, q) => p.t0 - q.t0);
+      const rects: [number, number, number, number][] = [];
+      let at = 0;
+      for (const h of holes) {
+        if (h.t0 > at + 0.005) rects.push([at, h.t0, 0, H]);
+        if (h.z0 > 0.005) rects.push([Math.max(at, h.t0), h.t1, 0, h.z0]);
+        if (H - h.z1 > 0.005) rects.push([Math.max(at, h.t0), h.t1, h.z1, H]);
+        at = Math.max(at, h.t1);
+      }
+      if (len - at > 0.005) rects.push([at, len, 0, H]);
+      const top = z.tile === 'none' ? 0 : z.tileTo > 0 ? Math.min(z.tileTo, H) : H;
+      const push = (t0: number, t1: number, z0: number, z1: number, tile: WallTile) => {
+        if (t1 - t0 < 0.01 || z1 - z0 < 0.005 || (tile === 'none' && z.paint === 'none')) return;
+        const m = (t0 + t1) / 2;
+        out.push({ zone: z.id, cx: A[0] + u[0] * m + n[0] * 0.006, cz: A[1] + u[1] * m + n[1] * 0.006, len: t1 - t0, yaw: Math.atan2(-u[1], u[0]), z0, z1, paint: z.paint, tile });
+      };
+      for (const [t0, t1, z0, z1] of rects) { push(t0, t1, z0, Math.min(z1, top), z.tile); push(t0, t1, Math.max(z0, top), z1, 'none'); }
+    });
+  }
+  return out;
 }
 
 /** The floor an item covers. */

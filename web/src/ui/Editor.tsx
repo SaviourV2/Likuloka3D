@@ -22,7 +22,7 @@ import { ifcFile } from '@/scene/ifc';
 import { dxfFile } from '@/scene/dxf';
 import { rememberedName } from '@/scene/versions';
 import { checks } from '@/scene/checks';
-import { furnishLevel } from '@/scene/furnish';
+import { furnishLevel, wallSkins } from '@/scene/furnish';
 import { ASSETS, ownFurniture, placeAsset } from '@/scene/assets';
 import { fromDxf, importDxf, parseDxf } from '@/scene/dxfin';
 import { compare, versionStore } from '@/scene/versions';
@@ -341,6 +341,7 @@ export default function Editor() {
       ownFurniture: (zone: string) => store.commit(d => ownFurniture(d, zone)[0], 'Make furniture editable'),
       furniture: () => ({ files: furniture.models, ...furniture.stats }),
       furnish: (level: string) => furnishLevel(editor.getState().doc, level),
+      furnishSkins: (level: string) => wallSkins(editor.getState().doc, level),
       load: store.load,
       importRoomlines: (plan: RoomlinesPlan, opts: { openings?: boolean } = {}) => store.commit(d => importRoomlines(d, plan, opts)[0], 'Import plan'),
       reset: () => projects.newProject(sampleScene()),

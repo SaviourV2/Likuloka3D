@@ -1139,6 +1139,49 @@ async function drag(page, level, grab, by, lift = 0) {
     await c.close();
   }
 
+  // ---- wall paint and tile ---------------------------------------------------------------------
+  {
+    const { page: f, context: c, errors } = await open(browser, url);
+    const id = await ids(f);
+    ok('rooms start with their walls as built', (await f.evaluate(() => likuloka.furniture().skins)) === 0);
+    await f.evaluate(i => likuloka.select(i), id.studioZone);
+    await f.selectOption('.inspector select[aria-label="Wall paint"]', 'sage');
+    await frames(f);
+    const painted = await f.evaluate(([l, z]) => { const s = likuloka.furnishSkins(l).filter(k => k.zone === z); return { n: s.length, tiles: s.filter(k => k.tile !== 'none').length, area: s.reduce((t, k) => t + k.len * (k.z1 - k.z0), 0) }; }, [id.studioLevel, id.studioZone]);
+    ok('painting a room covers the inside of its walls', painted.n >= 4 && painted.tiles === 0 && painted.area > 20, painted);
+    // the panels leave every door and window open
+    const clear = await f.evaluate(([l, z]) => {
+      const d = likuloka.getDoc(), skins = likuloka.furnishSkins(l).filter(k => k.zone === z);
+      let covered = 0, openings = 0;
+      for (const w of d.nodes[l].children.map(k => d.nodes[k]).filter(n => n.type === 'wall')) for (const o of w.children.map(k => d.nodes[k])) {
+        const len = Math.hypot(w.b[0] - w.a[0], w.b[1] - w.a[1]), cx = w.a[0] + (w.b[0] - w.a[0]) / len * o.offset, cy = w.a[1] + (w.b[1] - w.a[1]) / len * o.offset, zc = o.sill + o.height / 2;
+        openings++;
+        // a panel within the wall's thickness of the opening's centre, at its mid height, would cover it
+        if (skins.some(k => Math.hypot(k.cx - cx, k.cz - cy) < Math.min(k.len / 2, o.width / 2 - 0.02) && k.z0 < zc && k.z1 > zc)) covered++;
+      }
+      return { openings, covered };
+    }, [id.studioLevel, id.studioZone]);
+    ok('and leaves every door and window open', clear.openings >= 2 && clear.covered === 0, clear);
+    await f.selectOption('.inspector select[aria-label="Wall tile"]', 'subway');
+    await f.selectOption('.inspector select[aria-label="Tile height"]', '0.9');
+    await frames(f);
+    const tiled = await f.evaluate(([l, z]) => { const s = likuloka.furnishSkins(l).filter(k => k.zone === z); return { tileTop: Math.max(...s.filter(k => k.tile !== 'none').map(k => k.z1)), paintFrom: Math.min(...s.filter(k => k.tile === 'none').map(k => k.z0)), doc: likuloka.getDoc().nodes[z] }; }, [id.studioLevel, id.studioZone]);
+    ok('tiles run up to 900 mm and the paint carries on above', tiled.tileTop === 0.9 && tiled.paintFrom === 0.9 && tiled.doc.tile === 'subway' && tiled.doc.tileTo === 0.9, { top: tiled.tileTop, from: tiled.paintFrom });
+    const bad = await f.evaluate(i => [likuloka.commit(d => likuloka.ops.updateZone(d, i, { paint: 'gold' }), 'p'), likuloka.commit(d => likuloka.ops.updateZone(d, i, { tileTo: 2 }), 'p')], id.studioZone);
+    ok('an unknown paint or tile height is refused', bad.join() === 'false,false');
+    await f.click('[data-action="furniture"]');
+    await frames(f);
+    ok('paint and tiles stay when furniture is hidden', (await f.evaluate(() => likuloka.furniture())).skins > 0 && (await f.evaluate(() => likuloka.furniture())).pieces === 0);
+    await f.evaluate(() => likuloka.setRole({ kind: 'client', fixed: false }));
+    ok('a client can choose a wall paint', await f.evaluate(i => likuloka.commit(d => likuloka.ops.updateZone(d, i, { paint: 'linen' }), 'p'), id.studioZone));
+    await f.evaluate(() => likuloka.setRole({ kind: 'designer' }));
+    const old = await f.evaluate(i => { const d = JSON.parse(JSON.stringify(likuloka.getDoc())); delete d.nodes[i].paint; delete d.nodes[i].tile; delete d.nodes[i].tileTo; return likuloka.load(d) && [likuloka.getDoc().nodes[i].paint, likuloka.getDoc().nodes[i].tile, likuloka.getDoc().nodes[i].tileTo].join(); }, id.studioZone);
+    ok('a project saved before wall finishes opens with walls as built', old === 'none,none,0', old);
+    await frames(f);
+    ok('no page errors with wall finishes', errors.length === 0, errors.slice(0, 5));
+    await c.close();
+  }
+
   // ---- glass and the grid ---------------------------------------------------------------------
   {
     const { page: g, context: c, errors } = await open(browser, url);
