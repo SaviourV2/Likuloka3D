@@ -479,3 +479,8 @@ kbd { background: rgba(111, 208, 255, .1); color: var(--accent); box-shadow: ins
 }
 /* While something is dragged, the view says so. */
 .stage:has(.viewport[data-dragging="true"]) { box-shadow: inset 0 0 0 1px rgba(111, 208, 255, .35), inset 0 0 60px rgba(111, 208, 255, .12); transition: box-shadow .2s; }
+
+/* The plot's sides, in the inspector. */
+.sides { list-style: none; margin: 0 0 14px; padding: 0; display: grid; gap: 3px; font-size: 13px; }
+.sides li { display: grid; grid-template-columns: 1fr auto auto; gap: 8px; align-items: center; padding: 2px 4px; color: var(--muted); }
+.sides b { font: 600 12px var(--font-data); color: var(--ink); }

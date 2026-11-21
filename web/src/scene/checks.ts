@@ -145,6 +145,40 @@ export function runChecks(doc: SceneDoc, rules: Rules): Issue[] {
     }
   }
 
+  // The plot: each building stays inside the boundary, and the project's distance away from it.
+  if (doc.plot) {
+    const plot = doc.plot, setback = doc.settings.setback;
+    const inside = (p: Vec2) => {
+      let k = false;
+      for (let i = 0, j = plot.length - 1; i < plot.length; j = i++) {
+        const [xi, yi] = plot[i], [xj, yj] = plot[j];
+        if ((yi > p[1]) !== (yj > p[1]) && p[0] < (xj - xi) * (p[1] - yi) / (yj - yi) + xi) k = !k;
+      }
+      return k;
+    };
+    for (const b of doc.roots) {
+      const building = doc.nodes[b];
+      if (building?.type !== 'building') continue;
+      let out = 0, nearest = Infinity;
+      for (const l of building.children) {
+        const level = doc.nodes[l];
+        if (level?.type !== 'level') continue;
+        for (const c of level.children) {
+          const w = doc.nodes[c];
+          if (w?.type !== 'wall') continue;
+          for (const end of [w.a, w.b]) {
+            const p: Vec2 = [end[0] + building.origin[0], end[1] + building.origin[1]];
+            const d = Math.min(...plot.map((a, i) => distToSegment(p, a, plot[(i + 1) % plot.length])));
+            if (!inside(p) && d > 1e-6) out++;
+            else nearest = Math.min(nearest, d);
+          }
+        }
+      }
+      if (out) add(building.id, 'outside-plot', 'warning', `${building.name} crosses the plot's boundary: ${out} wall end${out === 1 ? ' is' : 's are'} outside it. Move the building or correct the plot.`);
+      else if (nearest < setback - 1e-6) add(building.id, 'setback', 'warning', `${building.name} comes within ${mm(nearest)} mm of the plot's boundary; the project keeps ${mm(setback)} mm clear. Check the setback your permit requires.`);
+    }
+  }
+
   return issues.sort((p, q) => (p.severity === q.severity ? 0 : p.severity === 'warning' ? -1 : 1));
 }
 

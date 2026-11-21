@@ -269,7 +269,7 @@ const RECIPES: Partial<Record<RoomType, (ctx: Ctx) => void>> = {
 // ---- from the scene ----------------------------------------------------------------
 
 /** Moves each edge of a polygon in by its own distance. `P` runs with its inside on the left of each edge's normal `[-u.y, u.x]`. */
-function inset(P: Pt[], by: number[]): Pt[] {
+export function inset(P: Pt[], by: number[]): Pt[] {
   const n = P.length;
   const line = (i: number) => {
     const A = P[i], B = P[(i + 1) % n], len = Math.hypot(B[0] - A[0], B[1] - A[1]) || 1e-9, u: Pt = [(B[0] - A[0]) / len, (B[1] - A[1]) / len];

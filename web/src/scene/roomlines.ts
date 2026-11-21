@@ -15,13 +15,13 @@
  * yet and are not carried over.
  */
 import { FLOOR_KEYS, GRID, ROOM_TYPES, type FloorFinish, type Id, type RoomType, type SceneDoc, type Vec2 } from './types';
-import { SceneError, addBuilding, addLevel, addOpeningAt, addSlab, addWall, addZone, snap } from './ops';
+import { SceneError, addBuilding, addLevel, addOpeningAt, addSlab, addWall, addZone, setPlot, snap } from './ops';
 
 interface Room { name: string; type?: string; floor?: string; x: number; y: number; w: number; h: number; points?: Vec2[] }
 interface Split { size: number; dir?: 'row' | 'col'; name?: string; type?: string; children?: Split[] }
 export interface RoomlinesPlan {
   name?: string;
-  /** Roomlines' plot: not carried over yet. */
+  /** Roomlines' plot: the corners of the land, in the plan's coordinates. */
   plot?: unknown;
   rooms?: Room[];
   width?: number;
@@ -333,6 +333,12 @@ export function importRoomlines(doc: SceneDoc, plan: RoomlinesPlan, opts: { orig
   const outline = shaped ? outlineOfShapes(rooms) : outlineOf(rooms);
   if (outline.length < 3) throw new SceneError('The rooms of this plan do not form an outline');
   const planned = opts.openings ? openingsOf(rooms) : [];
+  // The plan's plot becomes the project's, unless the project already has one.
+  if (!doc.plot && Array.isArray(plan.plot)) {
+    const o = (next.nodes[buildingId] as { origin: Vec2 }).origin;
+    try { next = setPlot(next, (plan.plot as Vec2[]).map(p => [p[0] + o[0], p[1] + o[1]] as Vec2)); }
+    catch (e) { if (!(e instanceof SceneError)) throw e; } // not a usable outline: the rooms still import
+  }
   for (let l = 0; l < Math.max(1, opts.levels ?? 1); l++) {
     let levelId: Id;
     [next, levelId] = addLevel(next, buildingId, { name: l === 0 ? 'Ground floor' : `Level ${l}` });

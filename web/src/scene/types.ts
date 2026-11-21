@@ -115,6 +115,8 @@ export type NodeOf<T extends NodeType> = Extract<SceneNode, { type: T }>;
 export interface ProjectSettings {
   /** The fitting gap between a frame and the structural opening, on each side (and at a door's head). */
   readonly tolerance: number;
+  /** How far buildings keep from the plot's boundary, in metres. Only checked when the project has a plot. */
+  readonly setback: number;
 }
 
 export interface SceneDoc {
@@ -124,6 +126,12 @@ export interface SceneDoc {
   readonly nodes: Readonly<Record<Id, SceneNode>>;
   /** Buildings, in order. */
   readonly roots: readonly Id[];
+  /**
+   * The boundary of the land, or null. Its corners are in plan coordinates, the
+   * ones building origins use, kept to the millimetre: land is surveyed, not
+   * drawn on the grid.
+   */
+  readonly plot: readonly Vec2[] | null;
 }
 
 /** How a building shows its levels. Not part of the document, so not undone. */
@@ -132,7 +140,7 @@ export type LevelMode = 'stack' | 'explode' | 'solo';
 export const GRID = 0.25;
 /** Door and window sizes are ordered in millimetres; they are kept to 5 mm. */
 export const SIZE_STEP = 0.005;
-export const DEFAULT_SETTINGS: ProjectSettings = { tolerance: 0.01 };
+export const DEFAULT_SETTINGS: ProjectSettings = { tolerance: 0.01, setback: 1.5 };
 /** Openings keep at least this much wall at each end and between each other. */
 export const OPENING_MARGIN = 0.1;
 export const OPENING_DEFAULTS: Record<OpeningKind, { width: number; height: number; sill: number; finish: OpeningFinish }> = {

@@ -1,7 +1,7 @@
 'use client';
 /** Properties of the selected node. Each field commits one undo step when it changes. */
 import { useEffect, useState } from 'react';
-import { addZone, area, rename, setWallLength, updateLevel, updateOpening, updateSlab, updateWall, updateZone } from '@/scene/ops';
+import { addZone, area, centreOnPlot, plotAround, removePlotCorner, rename, setPlot, updateSettings, setWallLength, updateLevel, updateOpening, updateSlab, updateWall, updateZone } from '@/scene/ops';
 import { commit, isClient, removeSelected, useEditor } from '@/scene/store';
 import { FLOOR_FINISHES, FLOOR_KEYS, type FloorFinish, FINISH_LABELS, frameSize, OPENING_FINISHES, ROOM_TYPES, type OpeningFinish, type OpeningNode, type RoomType, type SceneDoc, type SceneNode, type Vec2, type WallNode } from '@/scene/types';
 import { applyProduct, applyWallType, formatPrice, productFor, wallTypeFor } from '@/scene/catalogue';
@@ -78,6 +78,8 @@ const edit = (fn: (d: SceneDoc) => SceneDoc, label: string) => { commit(fn, labe
 export default function Inspector() {
   const node = useEditor(s => (s.selection ? s.doc.nodes[s.selection] : null) ?? null);
   const error = useEditor(s => s.error);
+  const plotTool = useEditor(s => s.tool === 'plot');
+  if (!node && plotTool) return <PlotPanel error={error} />;
   if (!node) {
     return (
       <aside className="inspector" aria-label="Inspector">
@@ -283,6 +285,46 @@ function Issues({ id }: { id: string }) {
 }
 
 /** A room's or slab's size: width by depth when it is a rectangle, and its area. */
+/** The plot: shown while the plot tool is on. Corners are set by dragging; this panel gives the figures. */
+function PlotPanel({ error }: { error: string | null }) {
+  const plot = useEditor(s => s.doc.plot);
+  const setback = useEditor(s => s.doc.settings.setback);
+  if (!plot) {
+    return (
+      <aside className="inspector" aria-label="Inspector" data-type="plot">
+        <h2>Plot</h2>
+        <p className="hint">The plot is the boundary of the land. Add one, then drag its corners to the land&rsquo;s real shape.</p>
+        <button type="button" className="add" data-action="plot-add" onClick={() => edit(d => plotAround(d), 'Add plot')}>+ Plot around the buildings</button>
+        {error && <p className="error" role="alert">{error}</p>}
+      </aside>
+    );
+  }
+  return (
+    <aside className="inspector" aria-label="Inspector" data-type="plot">
+      <h2>Plot</h2>
+      <p className="hint">Drag a ball to move a corner, or a small ball to add one. Corners move in steps of 50 mm.</p>
+      <dl className="measures" aria-label="Measurements">
+        <dt>Area</dt><dd data-measure="plot-area">{fmt(Math.abs(area(plot)))} m²</dd>
+        <dt>Corners</dt><dd>{plot.length}</dd>
+      </dl>
+      <ol className="sides" aria-label="Sides">
+        {plot.map((p, i) => (
+          <li key={i}>
+            <span>Side {i + 1}</span><b>{mm(len(p, plot[(i + 1) % plot.length]))} mm</b>
+            <button type="button" className="mini" disabled={plot.length <= 3} title="Remove the corner this side starts at" aria-label={`Remove corner ${i + 1}`} onClick={() => edit(d => removePlotCorner(d, i), 'Remove plot corner')}>×</button>
+          </li>
+        ))}
+      </ol>
+      <div className="fields">
+        <Mm label="Keep clear" hint="How far buildings keep from the boundary. Checks warn when one comes closer." value={setback} step={250} onCommit={v => edit(d => updateSettings(d, { setback: v }), 'Change distance from boundary')} />
+      </div>
+      <button type="button" className="add" data-action="plot-centre" onClick={() => edit(d => centreOnPlot(d), 'Centre on plot')}>Centre the buildings on the plot</button>
+      <p><button type="button" className="danger" data-action="plot-remove" onClick={() => edit(d => setPlot(d, null), 'Remove plot')}>Remove plot</button></p>
+      {error && <p className="error" role="alert">{error}</p>}
+    </aside>
+  );
+}
+
 function RoomSize({ points }: { points: readonly Vec2[] }) {
   const r = rectangle(points);
   return (

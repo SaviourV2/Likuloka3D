@@ -842,6 +842,62 @@ async function drag(page, level, grab, by, lift = 0) {
     await context.close();
   }
 
+  // ---- the plot ------------------------------------------------------------------------------
+  {
+    const { page: f, context: c, errors } = await open(browser, url);
+    ok('a project starts without a plot', (await f.evaluate(() => likuloka.getDoc().plot)) === null);
+    await f.keyboard.press('p');
+    ok('P turns the plot tool on', (await state(f)).tool === 'plot' && (await f.getAttribute('.inspector', 'data-type')) === 'plot');
+    await f.click('[data-action="plot-add"]');
+    await frames(f);
+    const made = await f.evaluate(() => { const d = likuloka.getDoc(); return { plot: d.plot, warn: likuloka.checks().filter(i => i.rule === 'outside-plot' || i.rule === 'setback').length }; });
+    ok('a plot is added 3 m around the buildings, with no warnings', made.plot && made.plot.length === 4 && made.warn === 0, made);
+    // drag the first corner by its handle
+    const at = await f.evaluate(() => { const p = likuloka.getDoc().plot[0], v = likuloka.projectGround(p[0], p[1]); return [v.x, v.y]; });
+    if (at) {
+      await f.mouse.move(at[0], at[1]); await f.mouse.down(); await f.mouse.move(at[0] + 40, at[1] + 10, { steps: 6 }); await f.mouse.up();
+      await frames(f);
+      const moved = await f.evaluate(() => likuloka.getDoc().plot[0]);
+      ok('dragging a ball moves a corner of the plot, in steps of 50 mm', (moved[0] !== made.plot[0][0] || moved[1] !== made.plot[0][1]) && moved.every(v => Math.abs(v * 20 - Math.round(v * 20)) < 1e-6), moved);
+      ok('and it is one undo step', (await state(f)).undo === 2 && (await state(f)).interaction.kind === 'idle');
+      await f.keyboard.press('Control+z');
+      ok('which undo takes back', JSON.stringify(await f.evaluate(() => likuloka.getDoc().plot)) === JSON.stringify(made.plot));
+    } else ok('the plot corner can be found on screen', false);
+    // a boundary that cuts through the house warns, and never blocks
+    const cut = await f.evaluate(() => {
+      const d = likuloka.getDoc(), xs = d.plot.map(p => p[0]), mid = (Math.min(...xs) + Math.max(...xs)) / 2;
+      const okEdit = likuloka.commit(x => likuloka.ops.setPlot(x, x.plot.map(p => [Math.min(p[0], mid), p[1]])), 'Plot');
+      return { okEdit, rules: likuloka.checks().filter(i => i.rule === 'outside-plot').length };
+    });
+    ok('a building across the boundary is a warning, not a refusal', cut.okEdit && cut.rules >= 1, cut);
+    await f.keyboard.press('Control+z');
+    const near = await f.evaluate(() => { likuloka.commit(d => likuloka.ops.updateSettings(d, { setback: 5 }), 'Setback'); return likuloka.checks().filter(i => i.rule === 'setback').length; });
+    ok('a building nearer the boundary than the project allows is a warning', near >= 1, near);
+    const centred = await f.evaluate(() => {
+      likuloka.commit(d => likuloka.ops.setPlot(d, d.plot.map(p => [p[0] + 7.3, p[1] - 4.1])), 'Plot');
+      likuloka.commit(d => likuloka.ops.centreOnPlot(d), 'Centre');
+      const d = likuloka.getDoc(), pts = likuloka.ops.footprint(d), c = likuloka.ops.centroid(d.plot);
+      const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
+      return { dx: Math.abs((Math.min(...xs) + Math.max(...xs)) / 2 - c[0]), dy: Math.abs((Math.min(...ys) + Math.max(...ys)) / 2 - c[1]), grid: d.roots.every(r => d.nodes[r].origin.every(v => Math.abs(v * 4 - Math.round(v * 4)) < 1e-9)) };
+    });
+    ok('centring moves the buildings to the middle of the plot, on the grid', centred.dx <= 0.126 && centred.dy <= 0.126 && centred.grid, centred);
+    const bad = await f.evaluate(() => ({ r: likuloka.commit(d => likuloka.ops.setPlot(d, [[0, 0], [1, 0]]), 'Plot'), err: likuloka.getState().error }));
+    ok('a plot with two corners is refused', !bad.r && /three corners/.test(bad.err), bad);
+    await f.evaluate(() => likuloka.setRole({ kind: 'client', fixed: false }));
+    const client = await f.evaluate(() => likuloka.commit(d => likuloka.ops.setPlot(d, null), 'Plot'));
+    ok('a client cannot change the plot', !client && (await f.evaluate(() => likuloka.getDoc().plot)) !== null);
+    await f.evaluate(() => likuloka.setRole({ kind: 'designer' }));
+    const old = await f.evaluate(() => { const d = JSON.parse(JSON.stringify(likuloka.getDoc())); delete d.plot; delete d.settings.setback; return likuloka.load(d) && { plot: likuloka.getDoc().plot, setback: likuloka.getDoc().settings.setback }; });
+    ok('a project saved before plots opens without one', old && old.plot === null && old.setback === 1.5, old);
+    const imported = await f.evaluate(() => {
+      likuloka.importRoomlines({ plot: [[-2, -2], [8, -3], [9, 7], [-2, 6]], rooms: [{ name: 'Living', type: 'living', x: 0, y: 0, w: 5, h: 4 }] });
+      return likuloka.getDoc().plot;
+    });
+    ok('a Roomlines plan brings its plot', imported && imported.length === 4, imported);
+    ok('no page errors with the plot', errors.length === 0, errors.slice(0, 5));
+    await c.close();
+  }
+
   // ---- glass and the grid ---------------------------------------------------------------------
   {
     const { page: g, context: c, errors } = await open(browser, url);

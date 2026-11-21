@@ -56,7 +56,7 @@ export function area(points: readonly Vec2[]): number {
   return s / 2;
 }
 
-export const emptyDoc = (name = UNTITLED): SceneDoc => ({ name, settings: DEFAULT_SETTINGS, nodes: {}, roots: [] });
+export const emptyDoc = (name = UNTITLED): SceneDoc => ({ name, settings: DEFAULT_SETTINGS, nodes: {}, roots: [], plot: null });
 
 const toSize = (v: number) => Math.round(v / SIZE_STEP) * SIZE_STEP;
 const round3 = (v: number) => Math.round(v * 1000) / 1000;
@@ -65,7 +65,98 @@ export function updateSettings(doc: SceneDoc, patch: Partial<ProjectSettings>): 
   const tolerance = patch.tolerance === undefined ? doc.settings.tolerance : finite(patch.tolerance, 'tolerance');
   if (tolerance < 0 || tolerance > 0.05) throw new SceneError('The fitting gap must be between 0 and 50 mm');
   const t = round3(tolerance);
-  return t === doc.settings.tolerance ? doc : { ...doc, settings: { ...doc.settings, tolerance: t } };
+  const setback = patch.setback === undefined ? doc.settings.setback : finite(patch.setback, 'setback');
+  if (setback < 0 || setback > 20) throw new SceneError('The distance from the boundary must be between 0 and 20 m');
+  const sb = round3(setback);
+  return t === doc.settings.tolerance && sb === doc.settings.setback ? doc : { ...doc, settings: { ...doc.settings, tolerance: t, setback: sb } };
+}
+
+// ---- the plot ------------------------------------------------------------------
+
+/** The plot's corners as stored: to the millimetre, running the way `area` counts as positive. */
+function plotPoints(points: unknown): Vec2[] {
+  if (!Array.isArray(points) || points.length < 3) throw new SceneError('A plot needs at least three corners');
+  const out = points.map((p, i): Vec2 => {
+    if (!Array.isArray(p) || p.length !== 2) throw new SceneError(`plot[${i}] must be [x, y]`);
+    return [round3(finite(p[0], `plot[${i}][0]`)), round3(finite(p[1], `plot[${i}][1]`))];
+  }).filter((p, i, all) => !samePoint(p, all[(i + all.length - 1) % all.length]));
+  if (out.length < 3 || Math.abs(area(out)) < 1) throw new SceneError('The plot has no area');
+  return area(out) < 0 ? out.reverse() : out;
+}
+
+/** Sets the land's boundary, or removes it with null. The buildings stay as they are. */
+export function setPlot(doc: SceneDoc, points: readonly Vec2[] | null): SceneDoc {
+  if (points === null) return doc.plot === null ? doc : { ...doc, plot: null };
+  const plot = plotPoints(points);
+  return doc.plot && sameData(doc.plot, plot) ? doc : { ...doc, plot };
+}
+
+export function movePlotCorner(doc: SceneDoc, index: number, to: Vec2): SceneDoc {
+  if (!doc.plot || !doc.plot[index]) throw new SceneError('The plot has no such corner');
+  return setPlot(doc, doc.plot.map((p, i) => (i === index ? to : p)));
+}
+
+/** Adds a corner after `index`, on the way to the next one. */
+export function insertPlotCorner(doc: SceneDoc, index: number, at: Vec2): SceneDoc {
+  if (!doc.plot || !doc.plot[index]) throw new SceneError('The plot has no such corner');
+  return setPlot(doc, [...doc.plot.slice(0, index + 1), at, ...doc.plot.slice(index + 1)]);
+}
+
+export function removePlotCorner(doc: SceneDoc, index: number): SceneDoc {
+  if (!doc.plot || !doc.plot[index]) throw new SceneError('The plot has no such corner');
+  if (doc.plot.length <= 3) throw new SceneError('A plot needs at least three corners');
+  return setPlot(doc, doc.plot.filter((_, i) => i !== index));
+}
+
+/** Every corner the buildings have, in plan coordinates. */
+export function footprint(doc: SceneDoc): Vec2[] {
+  const out: Vec2[] = [];
+  for (const b of doc.roots) {
+    const building = doc.nodes[b];
+    if (building?.type !== 'building') continue;
+    const at = (p: Vec2): Vec2 => [p[0] + building.origin[0], p[1] + building.origin[1]];
+    for (const l of building.children) {
+      const level = doc.nodes[l];
+      if (level?.type !== 'level') continue;
+      for (const c of level.children) {
+        const n = doc.nodes[c];
+        if (n?.type === 'wall') out.push(at(n.a), at(n.b));
+        else if (n?.type === 'zone' || n?.type === 'slab') n.points.forEach(p => out.push(at(p)));
+      }
+    }
+  }
+  return out;
+}
+
+/** A rectangular plot `margin` metres around everything drawn, to be dragged to the land's real shape. */
+export function plotAround(doc: SceneDoc, margin = 3): SceneDoc {
+  const pts = footprint(doc);
+  if (!pts.length) return setPlot(doc, [[-10, -7.5], [10, -7.5], [10, 7.5], [-10, 7.5]]);
+  const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
+  const x0 = Math.min(...xs) - margin, x1 = Math.max(...xs) + margin, y0 = Math.min(...ys) - margin, y1 = Math.max(...ys) + margin;
+  return setPlot(doc, [[x0, y0], [x1, y0], [x1, y1], [x0, y1]]);
+}
+
+/** The centre of area of a polygon. */
+export function centroid(P: readonly Vec2[]): Vec2 {
+  let a = 0, cx = 0, cy = 0;
+  P.forEach((p, i) => { const q = P[(i + 1) % P.length], k = p[0] * q[1] - q[0] * p[1]; a += k; cx += (p[0] + q[0]) * k; cy += (p[1] + q[1]) * k; });
+  return Math.abs(a) < 1e-9 ? P[0] : [cx / (3 * a), cy / (3 * a)];
+}
+
+/** Moves every building by the same amount, on the grid, so that together they sit in the middle of the plot. */
+export function centreOnPlot(doc: SceneDoc): SceneDoc {
+  if (!doc.plot) throw new SceneError('Add a plot first');
+  const pts = footprint(doc);
+  if (!pts.length) return doc;
+  const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]), c = centroid(doc.plot);
+  const dx = snap(c[0] - (Math.min(...xs) + Math.max(...xs)) / 2), dy = snap(c[1] - (Math.min(...ys) + Math.max(...ys)) / 2);
+  let next = doc;
+  for (const b of doc.roots) {
+    const building = next.nodes[b];
+    if (building?.type === 'building') next = setOrigin(next, b, [building.origin[0] + dx, building.origin[1] + dy]);
+  }
+  return next;
 }
 
 export function renameProject(doc: SceneDoc, name: string): SceneDoc {
@@ -588,14 +679,16 @@ export function migrate(raw: unknown): unknown {
     else nodes[id] = n;
   }
   const settings = { ...DEFAULT_SETTINGS, ...(typeof (doc as { settings?: unknown }).settings === 'object' ? (doc as { settings: object }).settings : {}) };
-  return { ...doc, name: typeof doc.name === 'string' && doc.name.trim() ? doc.name : UNTITLED, settings, nodes };
+  const plot = Array.isArray((doc as { plot?: unknown }).plot) ? (doc as { plot: unknown }).plot : null;
+  return { ...doc, name: typeof doc.name === 'string' && doc.name.trim() ? doc.name : UNTITLED, settings, nodes, plot };
 }
 
 export function validate(doc: unknown): SceneDoc {
   if (!doc || typeof doc !== 'object') throw new SceneError('Not a scene');
   const d = doc as SceneDoc;
   if (typeof d.name !== 'string') throw new SceneError('The project has no name');
-  if (!d.settings || typeof d.settings.tolerance !== 'number') throw new SceneError('The project has no settings');
+  if (!d.settings || typeof d.settings.tolerance !== 'number' || typeof d.settings.setback !== 'number') throw new SceneError('The project has no settings');
+  if (d.plot !== null && !(Array.isArray(d.plot) && d.plot.length >= 3 && d.plot.every(p => Array.isArray(p) && p.length === 2 && p.every(v => typeof v === 'number' && Number.isFinite(v))))) throw new SceneError('The plot is broken');
   if (!Array.isArray(d.roots) || !d.nodes || typeof d.nodes !== 'object') throw new SceneError('Not a scene');
   const seen = new Set<Id>();
   const walk = (id: Id, parent: Id | null, expect: NodeType[]) => {

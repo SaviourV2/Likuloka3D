@@ -8,8 +8,8 @@
  * - a room's name, use and floor finish;
  * - the project's name.
  *
- * Walls, levels, slabs, buildings, where openings sit and the project's
- * settings stay as the designer drew them. This is checked on the edit
+ * Walls, levels, slabs, buildings, the plot, where openings sit and the
+ * project's settings stay as the designer drew them. This is checked on the edit
  * itself, by comparing the documents before and after, so it holds for
  * buttons, keys, drags and scripts alike.
  *
@@ -36,7 +36,7 @@ function changedKeys(p: SceneNode, n: SceneNode): string[] {
 /** Null if a client may make this change, otherwise why not. */
 export function clientRefusal(prev: SceneDoc, next: SceneDoc): string | null {
   if (prev === next) return null;
-  if (!sameData(prev.settings, next.settings) || !sameData(prev.roots, next.roots)) return CLIENT_REFUSAL;
+  if (!sameData(prev.settings, next.settings) || !sameData(prev.roots, next.roots) || !sameData(prev.plot, next.plot)) return CLIENT_REFUSAL;
   for (const id of diff(prev, next)) {
     const p = prev.nodes[id];
     const n = next.nodes[id];

@@ -9,7 +9,7 @@ import * as THREE from 'three/webgpu';
 import type { ThreeEvent } from '@react-three/fiber';
 import type { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { world } from '@/ecs/world';
-import { ancestor, addOpeningAt, addWall, insertPoint, movePoint, moveWallEnd, offsetWall, setOrigin, slideOpening, snapPoint, translate } from '@/scene/ops';
+import { ancestor, addOpeningAt, addWall, insertPlotCorner, insertPoint, movePlotCorner, movePoint, moveWallEnd, offsetWall, setOrigin, slideOpening, snapPoint, translate } from '@/scene/ops';
 import { begin, cancel, commit, editor, end, preview, select, setInteraction, setTool, type Interaction } from '@/scene/store';
 import type { Id, SceneDoc, Vec2 } from '@/scene/types';
 
@@ -66,6 +66,57 @@ export function startDrag(e: ThreeEvent<PointerEvent>, target: Id, what: Extract
   const move = (ev: PointerEvent) => {
     const to = planAt(editor.getState().gesture?.doc ?? editor.getState().doc, level.id, ev.clientX, ev.clientY);
     if (to) preview(base => edit(base, from, to));
+    rig.invalidate();
+  };
+  const stop = (commitIt: boolean) => {
+    window.removeEventListener('pointermove', move);
+    window.removeEventListener('pointerup', up);
+    window.removeEventListener('pointercancel', abort);
+    window.removeEventListener('keydown', key, true);
+    if (commitIt) end(); else cancel();
+    if (rig.controls) rig.controls.enabled = true;
+    rig.invalidate();
+  };
+  const up = () => stop(true);
+  const abort = () => stop(false);
+  const key = (ev: KeyboardEvent) => { if (ev.key === 'Escape') { ev.stopPropagation(); stop(false); } };
+  window.addEventListener('pointermove', move);
+  window.addEventListener('pointerup', up);
+  window.addEventListener('pointercancel', abort);
+  window.addEventListener('keydown', key, true);
+}
+
+/** The plan point under a screen position on the ground, where the plot lies. */
+function groundAt(clientX: number, clientY: number): Vec2 | null {
+  const r = rig.dom.getBoundingClientRect();
+  raycaster.setFromCamera(new THREE.Vector2(((clientX - r.left) / r.width) * 2 - 1, -((clientY - r.top) / r.height) * 2 + 1), rig.camera);
+  plane.constant = 0;
+  return raycaster.ray.intersectPlane(plane, hit) ? [hit.x, hit.z] : null;
+}
+
+/** Plot corners are dragged in steps of 5 cm; an exact figure can be loaded from a file. */
+const PLOT_STEP = 0.05;
+const plotSnap = (p: Vec2): Vec2 => [Math.round(p[0] / PLOT_STEP) * PLOT_STEP, Math.round(p[1] / PLOT_STEP) * PLOT_STEP];
+
+/** Drags a corner of the plot, or a new corner out of the middle of a side. One undo step. */
+export function startPlotDrag(e: ThreeEvent<PointerEvent>, index: number, insert: boolean) {
+  const s = editor.getState();
+  if (e.button !== 0 || s.tool !== 'plot' || !s.doc.plot || s.role.kind === 'client') return;
+  e.stopPropagation();
+  const from = groundAt(e.clientX, e.clientY);
+  const plot = s.doc.plot, p = plot[index], q = plot[(index + 1) % plot.length];
+  if (!from || !p) return;
+  const start: Vec2 = insert ? [(p[0] + q[0]) / 2, (p[1] + q[1]) / 2] : p;
+  begin(insert ? 'Add plot corner' : 'Move plot corner');
+  setInteraction({ kind: 'dragging-plot' });
+  if (rig.controls) rig.controls.enabled = false;
+  const move = (ev: PointerEvent) => {
+    const to = groundAt(ev.clientX, ev.clientY);
+    if (to) preview(base => {
+      const at = plotSnap(plus(start, from, to));
+      if (!insert) return movePlotCorner(base, index, at);
+      return Math.hypot(to[0] - from[0], to[1] - from[1]) < 0.125 ? base : insertPlotCorner(base, index, at);
+    });
     rig.invalidate();
   };
   const stop = (commitIt: boolean) => {

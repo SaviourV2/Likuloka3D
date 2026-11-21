@@ -13,7 +13,8 @@ import { world } from '@/ecs/world';
 import { CUT, materials, UNIT_BOX } from '@/ecs/materials';
 import { editor, select, useEditor } from '@/scene/store';
 import type { Id, NodeType, SceneNode, Vec2 } from '@/scene/types';
-import { edits, placeOpening, rig, shown, startDrag } from './interact';
+import { inset } from '@/scene/furnish';
+import { edits, placeOpening, rig, shown, startDrag, startPlotDrag } from './interact';
 
 const EMPTY: readonly Id[] = [];
 
@@ -47,7 +48,47 @@ function clickSelect(id: Id) {
 
 export function SceneRoot() {
   const roots = useEditor(s => s.doc.roots);
-  return <>{roots.map(id => <Building key={id} id={id} />)}</>;
+  return <>{roots.map(id => <Building key={id} id={id} />)}<Plot /></>;
+}
+
+const PLOT_LINE = new THREE.MeshBasicNodeMaterial({ color: '#ffd166', toneMapped: false });
+const SETBACK_LINE = new THREE.MeshBasicNodeMaterial({ color: '#ffd166', toneMapped: false, transparent: true, opacity: 0.4, depthWrite: false });
+
+/** A closed line on the ground, drawn as one flat box per side so it has a width a line would not. */
+function GroundLine({ points, width, material, y }: { points: readonly Vec2[]; width: number; material: THREE.Material; y: number }) {
+  return (
+    <>
+      {points.map((p, i) => {
+        const q = points[(i + 1) % points.length], dx = q[0] - p[0], dz = q[1] - p[1], len = Math.hypot(dx, dz);
+        return len < 1e-6 ? null : <mesh key={i} geometry={UNIT_BOX} material={material} position={[(p[0] + q[0]) / 2, y, (p[1] + q[1]) / 2]}
+          rotation={[0, -Math.atan2(dz, dx), 0]} scale={[len + width, 0.02, width]} />;
+      })}
+    </>
+  );
+}
+
+/**
+ * The plot: the land's boundary, and inside it the line the project keeps
+ * buildings behind. It is not a node, and it is redrawn only when the plot or
+ * the distance changes. With the plot tool its corners can be dragged.
+ */
+function Plot() {
+  const plot = useEditor(s => s.doc.plot);
+  const setback = useEditor(s => s.doc.settings.setback);
+  const editing = useEditor(s => s.tool === 'plot' && s.role.kind !== 'client');
+  const inner = useMemo(() => (plot && setback > 0 ? inset(plot.map(p => [p[0], p[1]] as [number, number]), plot.map(() => setback)) : null), [plot, setback]);
+  if (!plot) return null;
+  return (
+    <group userData={{ plot: true }}>
+      <GroundLine points={plot} width={0.12} material={PLOT_LINE} y={-0.24} />
+      {inner && <GroundLine points={inner} width={0.05} material={SETBACK_LINE} y={-0.245} />}
+      {editing && plot.map((p, i) => <Handle key={`p${i}`} at={p} lift={0} onDown={e => startPlotDrag(e, i, false)} />)}
+      {editing && plot.map((p, i) => {
+        const q = plot[(i + 1) % plot.length];
+        return <Handle key={`m${i}`} small at={[(p[0] + q[0]) / 2, (p[1] + q[1]) / 2]} lift={0} onDown={e => startPlotDrag(e, i, true)} />;
+      })}
+    </group>
+  );
 }
 
 function Building({ id }: { id: Id }) {

@@ -25,9 +25,12 @@ export type Interaction =
   | { kind: 'dragging'; target: Id; what: 'wall' | 'wall-end' | 'point' | 'insert' | 'zone' | 'opening' | 'building' }
   | { kind: 'drawing-wall'; level: Id; from: Vec2 | null; to: Vec2 | null }
   /** A click on a wall puts a door or window there. */
-  | { kind: 'placing'; what: OpeningKind };
+  | { kind: 'placing'; what: OpeningKind }
+  /** A corner of the plot follows the pointer. */
+  | { kind: 'dragging-plot' };
 
-export type Tool = 'select' | 'wall' | 'door' | 'window';
+/** `plot` shows the plot's corners so they can be dragged; nothing else is selected while it is on. */
+export type Tool = 'select' | 'wall' | 'door' | 'window' | 'plot';
 
 export interface BuildingView { mode: LevelMode; solo: Id | null }
 
@@ -269,6 +272,7 @@ export function setTool(tool: Tool) {
   const level = s.activeLevel;
   set({
     tool,
+    ...(tool === 'plot' ? { selection: null } : {}),
     interaction: tool === 'wall' && level ? { kind: 'drawing-wall', level, from: null, to: null }
       : tool === 'door' || tool === 'window' ? { kind: 'placing', what: tool }
       : { kind: 'idle' },

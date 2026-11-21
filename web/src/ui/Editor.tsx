@@ -1,5 +1,6 @@
 'use client';
 import dynamic from 'next/dynamic';
+import { Vector3 } from 'three/webgpu';
 import { useEffect, useRef, useState } from 'react';
 import * as ops from '@/scene/ops';
 import * as projects from '@/scene/projects';
@@ -149,6 +150,7 @@ function Toolbar({ menu }: { menu: [string, string, () => void][] }) {
         <button type="button" role="radio" aria-checked={tool === 'wall'} data-tool="wall" title="Draw walls (W)" onClick={() => store.setTool('wall')}>Walls</button>
         <button type="button" role="radio" aria-checked={tool === 'door'} data-tool="door" title="Add doors (D)" onClick={() => store.setTool('door')}>Door</button>
         <button type="button" role="radio" aria-checked={tool === 'window'} data-tool="window" title="Add windows (N)" onClick={() => store.setTool('window')}>Window</button>
+        <button type="button" role="radio" aria-checked={tool === 'plot'} data-tool="plot" title="The plot: the boundary of the land (P)" onClick={() => store.setTool('plot')}>Plot</button>
       </div>}
       {tool === 'wall' && <span className="hint">{drawing ? 'Click to add the next wall. Esc ends the run.' : 'Click to start a wall.'}</span>}
       {(tool === 'door' || tool === 'window') && <span className="hint">Click a wall to add a {tool}. Esc to stop.</span>}
@@ -285,7 +287,7 @@ export default function Editor() {
       else if (k === 'escape') {
         const tool = editor.getState().tool;
         if (tool === 'wall') endChain();
-        else if (tool === 'door' || tool === 'window') store.setTool('select');
+        else if (tool === 'door' || tool === 'window' || tool === 'plot') store.setTool('select');
         else store.select(null);
       }
       else if (k === 'delete' || k === 'backspace') { if (store.removeSelected()) e.preventDefault(); }
@@ -293,6 +295,7 @@ export default function Editor() {
       else if (k === 'w') store.setTool('wall');
       else if (k === 'd') store.setTool('door');
       else if (k === 'n') store.setTool('window');
+      else if (k === 'p') store.setTool('plot');
       else if (k === 'm') store.setMeasure(!editor.getState().measure);
       else if (k === 'f') {
         const sel = editor.getState().selection;
@@ -380,6 +383,12 @@ export default function Editor() {
       /** Screen position of a plan point on a level, as drawn now. */
       project: (levelId: string, x: number, y: number, lift = 0) => {
         const v = world.toWorld(editor.getState().doc, levelId, [x, y], lift).project(rig.camera);
+        const r = rig.dom.getBoundingClientRect();
+        return { x: r.left + (v.x + 1) / 2 * r.width, y: r.top + (1 - v.y) / 2 * r.height };
+      },
+      /** Where a point on the ground, such as a corner of the plot, is on screen. */
+      projectGround: (x: number, y: number) => {
+        const v = new Vector3(x, 0, y).project(rig.camera);
         const r = rig.dom.getBoundingClientRect();
         return { x: r.left + (v.x + 1) / 2 * r.width, y: r.top + (1 - v.y) / 2 * r.height };
       },
