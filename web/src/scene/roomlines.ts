@@ -14,10 +14,10 @@
  * Roomlines' finishes, plot and furniture have no place in the scene document
  * yet and are not carried over.
  */
-import { GRID, ROOM_TYPES, type Id, type RoomType, type SceneDoc, type Vec2 } from './types';
+import { FLOOR_KEYS, GRID, ROOM_TYPES, type FloorFinish, type Id, type RoomType, type SceneDoc, type Vec2 } from './types';
 import { SceneError, addBuilding, addLevel, addOpeningAt, addSlab, addWall, addZone, snap } from './ops';
 
-interface Room { name: string; type?: string; x: number; y: number; w: number; h: number; points?: Vec2[] }
+interface Room { name: string; type?: string; floor?: string; x: number; y: number; w: number; h: number; points?: Vec2[] }
 interface Split { size: number; dir?: 'row' | 'col'; name?: string; type?: string; children?: Split[] }
 export interface RoomlinesPlan {
   name?: string;
@@ -35,6 +35,9 @@ const GUESS: [RegExp, RoomType][] = [
   [/hall|entry|corridor|foyer/i, 'hallway'], [/laundry|utility/i, 'laundry'],
   [/storage|store|closet|pantry/i, 'storage'], [/studio/i, 'studio'],
 ];
+/** A floor the room was given in Roomlines, when this editor has that finish; otherwise the colour of its use. */
+const floorOf = (r: Room): FloorFinish => (FLOOR_KEYS as readonly string[]).includes(r.floor ?? '') ? r.floor as FloorFinish : 'none';
+
 function useOf(room: { name?: string; type?: string }): RoomType {
   if (room.type && (ROOM_TYPES as readonly string[]).includes(room.type)) return room.type as RoomType;
   for (const [re, t] of GUESS) if (re.test(room.name ?? '')) return t;
@@ -81,9 +84,9 @@ export function roomsOf(plan: RoomlinesPlan): Room[] {
       if (signed(P) < 0) P.reverse();
       const xs = P.map(q => q[0]), ys = P.map(q => q[1]), x = Math.min(...xs), y = Math.min(...ys);
       const box = P.length === 4 && P.every(q => (q[0] === x || q[0] === Math.max(...xs)) && (q[1] === y || q[1] === Math.max(...ys)));
-      return { name: String(r.name ?? `Room ${i + 1}`), type: r.type, x, y, w: Math.max(...xs) - x, h: Math.max(...ys) - y, ...(box ? {} : { points: P }) };
+      return { name: String(r.name ?? `Room ${i + 1}`), type: r.type, floor: r.floor, x, y, w: Math.max(...xs) - x, h: Math.max(...ys) - y, ...(box ? {} : { points: P }) };
     }
-    const room = { name: String(r.name ?? `Room ${i + 1}`), type: r.type, x: n(r.x, 'x'), y: n(r.y, 'y'), w: n(r.w, 'w'), h: n(r.h, 'h') };
+    const room = { name: String(r.name ?? `Room ${i + 1}`), type: r.type, floor: r.floor, x: n(r.x, 'x'), y: n(r.y, 'y'), w: n(r.w, 'w'), h: n(r.h, 'h') };
     if (room.w < GRID || room.h < GRID) throw new SceneError(`Room ${i + 1} has no area`);
     return room;
   });
@@ -336,7 +339,7 @@ export function importRoomlines(doc: SceneDoc, plan: RoomlinesPlan, opts: { orig
     [next] = addSlab(next, levelId, { points: outline, name: 'Floor slab' });
     const wallIds: Id[] = [];
     walls.forEach(([a, b], k) => { let wid: Id; [next, wid] = addWall(next, levelId, { a, b, thickness: 0.15, name: `Wall ${k + 1}` }); wallIds.push(wid); });
-    for (const r of rooms) [next] = addZone(next, levelId, { name: r.name, use: useOf(r), points: cornersOf(r) });
+    for (const r of rooms) [next] = addZone(next, levelId, { name: r.name, use: useOf(r), points: cornersOf(r), floor: floorOf(r) });
     for (const o of planned) {
       // the wall this opening sits on: the one whose line passes through the point, between its ends
       const k = walls.findIndex(([a, b]) => { const len = Math.hypot(b[0] - a[0], b[1] - a[1]), ux = (b[0] - a[0]) / len, uy = (b[1] - a[1]) / len, s = (o.at[0] - a[0]) * ux + (o.at[1] - a[1]) * uy; return s > 0 && s < len && Math.abs((o.at[0] - a[0]) * uy - (o.at[1] - a[1]) * ux) < 0.13; });

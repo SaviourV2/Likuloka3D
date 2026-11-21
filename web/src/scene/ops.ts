@@ -4,8 +4,8 @@
  * is what dirty tracking and undo rely on. Invalid input throws a SceneError.
  */
 import {
-  DEFAULT_SETTINGS, GRID, MIN_ARCH_SIDE, SIZE_STEP, MIN_WALL, OPENING_DEFAULTS, OPENING_FINISHES, OPENING_MARGIN, OPENING_SHAPES, ROOM_TYPES, UNTITLED,
-  type BuildingNode, type Id, type LevelNode, type NodeOf, type NodeType, type OpeningFinish, type OpeningKind, type OpeningNode,
+  DEFAULT_SETTINGS, FLOOR_KEYS, GRID, MIN_ARCH_SIDE, SIZE_STEP, MIN_WALL, OPENING_DEFAULTS, OPENING_FINISHES, OPENING_MARGIN, OPENING_SHAPES, ROOM_TYPES, UNTITLED,
+  type BuildingNode, type FloorFinish, type Id, type LevelNode, type NodeOf, type NodeType, type OpeningFinish, type OpeningKind, type OpeningNode,
   type OpeningShape, type OpeningState, type ProjectSettings, type RoomType, type WallLayer, type SceneDoc, type SceneNode, type SlabNode, type Vec2, type WallNode, type ZoneNode,
 } from './types';
 
@@ -430,7 +430,12 @@ export function wallAt(doc: SceneDoc, levelId: Id, p: Vec2): WallNode | null {
 
 // ---- zones and slabs -----------------------------------------------------------
 
-export interface ZoneInput { points: readonly Vec2[]; name?: string; use?: RoomType }
+export interface ZoneInput { points: readonly Vec2[]; name?: string; use?: RoomType; floor?: FloorFinish }
+
+function floorOf(floor: FloorFinish | undefined) {
+  if (floor !== undefined && !FLOOR_KEYS.includes(floor)) throw new SceneError(`Unknown floor finish ${floor}`);
+  return floor;
+}
 
 export function addZone(doc: SceneDoc, levelId: Id, input: ZoneInput, id = newId('zone')): [SceneDoc, Id] {
   get(doc, levelId, 'level');
@@ -440,6 +445,7 @@ export function addZone(doc: SceneDoc, levelId: Id, input: ZoneInput, id = newId
     name: input.name?.trim() || 'Zone',
     points: polygon(input.points, 'points'),
     use: input.use ?? 'living',
+    floor: floorOf(input.floor) ?? 'none',
   };
   return [attach(doc, node), id];
 }
@@ -498,10 +504,10 @@ export function translate(doc: SceneDoc, id: Id, d: Vec2): SceneDoc {
   return put(doc, { ...n, points: n.points.map(([x, y]) => [x + dx, y + dy] as Vec2) });
 }
 
-export function updateZone(doc: SceneDoc, id: Id, patch: { name?: string; use?: RoomType }): SceneDoc {
+export function updateZone(doc: SceneDoc, id: Id, patch: { name?: string; use?: RoomType; floor?: FloorFinish }): SceneDoc {
   const z = get(doc, id, 'zone');
   if (patch.use !== undefined && !ROOM_TYPES.includes(patch.use)) throw new SceneError(`Unknown use ${patch.use}`);
-  return put(doc, { ...z, name: patch.name?.trim() || z.name, use: patch.use ?? z.use });
+  return put(doc, { ...z, name: patch.name?.trim() || z.name, use: patch.use ?? z.use, floor: floorOf(patch.floor) ?? z.floor });
 }
 
 export function updateLevel(doc: SceneDoc, id: Id, patch: { name?: string; elevation?: number; height?: number }): SceneDoc {
@@ -564,7 +570,8 @@ export function diff(prev: SceneDoc, next: SceneDoc): Set<Id> {
 /**
  * Brings a scene saved by an older version up to date: walls before openings
  * had no `children`, openings before their options had no shape, finish or
- * state, and scenes before projects had no name. Returns a new object.
+ * state, zones before finishes had no floor, and scenes before projects had
+ * no name. Returns a new object.
  */
 export function migrate(raw: unknown): unknown {
   if (!raw || typeof raw !== 'object') return raw;
@@ -577,7 +584,8 @@ export function migrate(raw: unknown): unknown {
     else if (n?.type === 'opening') {
       const kind = n.kind === 'window' ? 'window' : 'door';
       nodes[id] = { ...n, shape: n.shape ?? 'square', finish: n.finish ?? OPENING_DEFAULTS[kind].finish, state: n.state ?? 'closed', product: n.product ?? null };
-    } else nodes[id] = n;
+    } else if (n?.type === 'zone') nodes[id] = { ...n, floor: (FLOOR_KEYS as readonly unknown[]).includes(n.floor) ? n.floor : 'none' }; // a finish this version does not have falls back too
+    else nodes[id] = n;
   }
   const settings = { ...DEFAULT_SETTINGS, ...(typeof (doc as { settings?: unknown }).settings === 'object' ? (doc as { settings: object }).settings : {}) };
   return { ...doc, name: typeof doc.name === 'string' && doc.name.trim() ? doc.name : UNTITLED, settings, nodes };

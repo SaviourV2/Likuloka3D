@@ -63,10 +63,15 @@ export type RoomType =
   | 'living' | 'kitchen' | 'dining' | 'bedroom' | 'bathroom'
   | 'office' | 'hallway' | 'laundry' | 'storage' | 'studio';
 
+/** A floor finish. These are generic finishes drawn by the shader, not products. */
+export type FloorFinish = 'none' | 'oak' | 'walnut' | 'tile-60' | 'tile-60x120' | 'tile-30x60' | 'tile-20' | 'terrazzo' | 'concrete';
+
 export interface ZoneNode extends Base<'zone'> {
   readonly parent: Id;
   readonly points: readonly Vec2[];
   readonly use: RoomType;
+  /** The floor finish drawn in the room, or 'none' to show the colour of its use. */
+  readonly floor: FloorFinish;
 }
 
 export interface SlabNode extends Base<'slab'> {
@@ -139,6 +144,21 @@ export const OPENING_FINISHES: readonly OpeningFinish[] = ['timber', 'steel', 'a
 export const FINISH_LABELS: Record<OpeningFinish, string> = { timber: 'Timber', steel: 'Steel', aluminium: 'Aluminium', upvc: 'uPVC' };
 /** An arched opening keeps at least this much straight side below the arch. */
 export const MIN_ARCH_SIDE = 0.3;
+/**
+ * How each floor finish is drawn: its colour, the colour of its joints and the
+ * size of one tile or plank in metres (0 for a finish with no joints).
+ */
+export const FLOOR_FINISHES: Record<Exclude<FloorFinish, 'none'>, { label: string; base: string; joint: string; size: readonly [number, number] }> = {
+  'oak': { label: 'Oak planks', base: '#c49a62', joint: '#8a6a3f', size: [0.15, 1.5] },
+  'walnut': { label: 'Walnut planks', base: '#7a5236', joint: '#4a3020', size: [0.15, 1.5] },
+  'tile-60': { label: 'Tile 60 × 60, warm grey', base: '#d9d6cf', joint: '#8f8b83', size: [0.6, 0.6] },
+  'tile-60x120': { label: 'Marble look 60 × 120', base: '#eceae6', joint: '#a9a6a0', size: [0.6, 1.2] },
+  'tile-30x60': { label: 'Tile 30 × 60, white', base: '#eef0ef', joint: '#9ea5a5', size: [0.3, 0.6] },
+  'tile-20': { label: 'Tile 20 × 20, blue-grey', base: '#cfdde2', joint: '#7f96a0', size: [0.2, 0.2] },
+  'terrazzo': { label: 'Terrazzo', base: '#d8d2c8', joint: '#d8d2c8', size: [0, 0] },
+  'concrete': { label: 'Polished concrete', base: '#a8aaab', joint: '#a8aaab', size: [0, 0] },
+};
+export const FLOOR_KEYS = ['none', ...Object.keys(FLOOR_FINISHES)] as readonly FloorFinish[];
 export const UNTITLED = 'Untitled project';
 export const MIN_WALL = GRID;
 export const ROOM_TYPES: readonly RoomType[] = [

@@ -375,5 +375,5 @@ function zoneGeometry(mesh: THREE.Mesh, z: ZoneNode) {
 
 function paintOutline(mesh: THREE.Mesh, node: ZoneNode | SlabNode, selected: boolean) {
   if (node.type === 'slab') mesh.material = selected ? materials.slabSelected : materials.slab;
-  else mesh.material = materials.zone(node.use, selected);
+  else mesh.material = materials.zone(node.use, selected, node.floor);
 }

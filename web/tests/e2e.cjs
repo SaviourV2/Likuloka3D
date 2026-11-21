@@ -557,6 +557,7 @@ async function drag(page, level, grab, by, lift = 0) {
     const refusedMove = await page.evaluate(i => likuloka.commit(d => likuloka.ops.offsetWall(d, i, 0.5), 'Move'), id.partition);
     ok('a client cannot move a wall', !refusedMove && /client view/.test((await state(page)).error));
     const z = await page.evaluate(i => likuloka.getDoc().nodes[i].use, id.studioZone);
+    ok('a client can choose a floor finish', await page.evaluate(i => likuloka.commit(d => likuloka.ops.updateZone(d, i, { floor: 'terrazzo' }), 'Floor'), id.studioZone));
     ok('a client can change a room’s use', await page.evaluate(i => likuloka.commit(d => likuloka.ops.updateZone(d, i, { use: 'office' }), 'Use'), id.studioZone));
     ok('a client can choose a product', await page.evaluate(i => { const p = likuloka.catalogue().products.find(x => x.code === 'W-ALU-1980x1180'); return likuloka.commit(d => likuloka.ops.updateOpening(d, i, { kind: p.kind, width: 2, height: 1.2, sill: 0.89, product: p.code }), 'Product'); }, sw.id));
     const custom = await page.evaluate(i => likuloka.commit(d => likuloka.ops.updateOpening(d, i, { width: 1.7 }), 'Size'), sw.id);
@@ -757,6 +758,38 @@ async function drag(page, level, grab, by, lift = 0) {
     ok('the run finished', false, String(e && e.stack || e));
   }
   await context.close();
+
+  // ---- floor finishes ------------------------------------------------------------------------
+  {
+    const { page: f, context: c, errors } = await open(browser, url);
+    const id = await ids(f);
+    const before = await f.evaluate(i => likuloka.getDoc().nodes[i].floor, id.studioZone);
+    ok('a room starts with the colour of its use', before === 'none', before);
+    await f.evaluate(i => likuloka.select(i), id.studioZone);
+    await f.selectOption('.inspector select[aria-label="Floor finish"]', 'oak');
+    await frames(f);
+    ok('the inspector gives a room a floor finish', (await f.evaluate(i => likuloka.getDoc().nodes[i].floor, id.studioZone)) === 'oak');
+    const bad = await f.evaluate(i => likuloka.commit(d => likuloka.ops.updateZone(d, i, { floor: 'gold' }), 'Floor'), id.studioZone);
+    ok('an unknown floor finish is refused', !bad && (await f.evaluate(i => likuloka.getDoc().nodes[i].floor, id.studioZone)) === 'oak');
+    await f.keyboard.press('Control+z');
+    ok('a floor finish is undone', (await f.evaluate(i => likuloka.getDoc().nodes[i].floor, id.studioZone)) === 'none');
+    const old = await f.evaluate(i => {
+      const d = JSON.parse(JSON.stringify(likuloka.getDoc()));
+      delete d.nodes[i].floor; // as saved before rooms had finishes
+      return likuloka.load(d) && likuloka.getDoc().nodes[i].floor;
+    }, id.studioZone);
+    ok('a project saved before floor finishes opens with none', old === 'none', old);
+    const imported = await f.evaluate(() => {
+      likuloka.reset(); const n = likuloka.getDoc().roots.length;
+      likuloka.importRoomlines({ rooms: [{ name: 'Bath', type: 'bathroom', floor: 'tile-20', x: 0, y: 0, w: 2, h: 2 }, { name: 'Hall', type: 'hallway', floor: 'subway', x: 2, y: 0, w: 2, h: 2 }] });
+      const d = likuloka.getDoc(), l = d.nodes[d.nodes[d.roots[n]].children[0]];
+      return l.children.map(k => d.nodes[k]).filter(k => k.type === 'zone').map(z => z.floor);
+    });
+    ok('a Roomlines room keeps a floor this editor has', imported.join() === 'tile-20,none', imported);
+    await frames(f);
+    ok('no page errors with floor finishes', errors.length === 0, errors.slice(0, 5));
+    await c.close();
+  }
 
   // ---- glass and the grid ---------------------------------------------------------------------
   {

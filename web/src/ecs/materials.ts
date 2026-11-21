@@ -14,8 +14,8 @@
  * costs no shader compile after the first use.
  */
 import * as THREE from 'three/webgpu';
-import { color, float, min, mix, modelScale, oscSine, positionLocal, smoothstep, time, uniform, userData, vec3 } from 'three/tsl';
-import type { OpeningFinish, RoomType } from '@/scene/types';
+import { color, float, fract, max, min, mix, modelScale, oscSine, positionLocal, positionWorld, smoothstep, step, time, uniform, userData, vec3 } from 'three/tsl';
+import { FLOOR_FINISHES, type FloorFinish, type OpeningFinish, type RoomType } from '@/scene/types';
 
 /** One unit cube shared by every wall piece and door or window part; each is scaled into place. */
 export const UNIT_BOX = new THREE.BoxGeometry(1, 1, 1);
@@ -79,12 +79,28 @@ const USE: Record<RoomType, string> = {
 };
 
 const zones = new Map<string, THREE.MeshBasicNodeMaterial>();
-function zoneMaterial(use: RoomType, selected: boolean) {
-  const key = `${use}:${selected}`;
+/** Joints are drawn this wide, in metres: wider than real ones, so they still show from above the house. */
+const JOINT = 0.012;
+
+/** A floor finish: its colour, with the joints of its tiles or planks laid out in world metres. */
+function floorColour(floor: Exclude<FloorFinish, 'none'>) {
+  const f = FLOOR_FINISHES[floor];
+  const [w, l] = f.size;
+  if (!w) return color(f.base);
+  const joint = max(step(fract(positionWorld.x.div(w)), float(JOINT / w)), step(fract(positionWorld.z.div(l)), float(JOINT / l)));
+  return mix(color(f.base), color(f.joint), joint);
+}
+
+function zoneMaterial(use: RoomType, selected: boolean, floor: FloorFinish = 'none') {
+  const key = `${use}:${selected}:${floor}`;
   let m = zones.get(key);
   if (!m) {
     m = new THREE.MeshBasicNodeMaterial({ transparent: true, depthWrite: false, side: THREE.DoubleSide, toneMapped: false });
-    if (selected) {
+    if (floor !== 'none') {
+      // A finished floor is solid; selected, it takes the accent and pulses like any zone.
+      m.colorNode = selected ? mix(floorColour(floor), color(ACCENT), float(0.3).add(oscSine(time.mul(0.6)).sub(0.5).mul(0.2).mul(motion))) : floorColour(floor);
+      m.opacityNode = float(0.96);
+    } else if (selected) {
       m.colorNode = mix(color(USE[use]), color(ACCENT), float(0.45));
       m.opacityNode = float(0.85).add(oscSine(time.mul(0.6)).sub(0.5).mul(0.24).mul(motion));
     } else {

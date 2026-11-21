@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { addZone, area, rename, setWallLength, updateLevel, updateOpening, updateSlab, updateWall, updateZone } from '@/scene/ops';
 import { commit, isClient, removeSelected, useEditor } from '@/scene/store';
-import { FINISH_LABELS, frameSize, OPENING_FINISHES, ROOM_TYPES, type OpeningFinish, type OpeningNode, type RoomType, type SceneDoc, type SceneNode, type Vec2, type WallNode } from '@/scene/types';
+import { FLOOR_FINISHES, FLOOR_KEYS, type FloorFinish, FINISH_LABELS, frameSize, OPENING_FINISHES, ROOM_TYPES, type OpeningFinish, type OpeningNode, type RoomType, type SceneDoc, type SceneNode, type Vec2, type WallNode } from '@/scene/types';
 import { applyProduct, applyWallType, formatPrice, productFor, wallTypeFor } from '@/scene/catalogue';
 import { checks } from '@/scene/checks';
 import { FINISH_SWATCH, USE_COLOURS } from '@/ecs/materials';
@@ -139,6 +139,13 @@ function Selected({ node, error }: { node: SceneNode; error: string | null }) {
               {ROOM_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
             </select>
             <i className="swatch" style={{ background: USE_COLOURS[node.use] }} aria-hidden="true" />
+          </label>
+          <label className="field wide">
+            <span>Floor</span>
+            <select value={node.floor} aria-label="Floor finish" onChange={e => edit(d => updateZone(d, id, { floor: e.target.value as FloorFinish }), 'Change floor finish')}>
+              {FLOOR_KEYS.map(k => <option key={k} value={k}>{k === 'none' ? 'Colour of the use' : FLOOR_FINISHES[k].label}</option>)}
+            </select>
+            <i className="swatch" style={{ background: node.floor === 'none' ? USE_COLOURS[node.use] : FLOOR_FINISHES[node.floor].base }} aria-hidden="true" />
           </label>
           <RoomSize points={node.points} />
         </div>
