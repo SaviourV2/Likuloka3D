@@ -8,7 +8,7 @@ import { schedule, scheduleCsv } from '@/scene/schedule';
 import { applyProduct, BUNDLED, fetchCatalogue, productFor } from '@/scene/catalogue';
 import * as store from '@/scene/store';
 import { editor, isUnsaved, useEditor } from '@/scene/store';
-import type { SceneDoc } from '@/scene/types';
+import { GRID, type SceneDoc } from '@/scene/types';
 import { world } from '@/ecs/world';
 import { endChain, rig } from '@/render/interact';
 import Tree from './Tree';
@@ -207,6 +207,7 @@ function Status({ onChecks }: { onChecks: () => void }) {
       <span>{unsaved ? 'Unsaved changes' : where === 'cloud' ? 'Saved in the cloud' : 'Saved'}</span>
       <CloudNotice />
       <CheckCount onOpen={onChecks} />
+      <span data-grid={GRID} title="The fine lines on the ground are 0.25 m apart, the brighter ones 1 m and 5 m">Grid {GRID * 100} cm</span>
       <span>{steps} undo step{steps === 1 ? '' : 's'}</span>
       {last && <span>{last}</span>}
     </footer>

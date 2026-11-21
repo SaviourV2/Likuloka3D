@@ -51,6 +51,8 @@ Roomlines, a floor plan editor with a 3D view. `README.md` documents the plan fo
 - Never read browser storage while rendering: the page is pre-rendered as static HTML, and a difference breaks hydration. Read it in effects or in components that render only once a dialog is open.
 - A `useFrame` callback must use a priority of 0 or below: a positive priority takes rendering over from React Three Fiber and the view goes blank.
 - The look is the night edition of likuloka.com: one dark theme, black with light-blue `--accent` and cobalt `--accent-2`, Archivo, JetBrains Mono for figures, `--crit` for errors and destructive actions, `--warn` for warnings. Printed and exported drawings stay black on white.
+- Glass in `web/` is for what floats above the 3D view: the bar (`.glass`), its menu, the labels and the dialogs. The panels beside the view are translucent, not glass. Never put `filter`, `opacity`, `mask` or `view-transition-name` on a parent of a glass element; the menu sits inside the bar, so it stays nearly solid. Everything must turn solid with `prefers-reduced-transparency`.
+- The ground shows the grid the editor snaps to: a line every 0.25 m, brighter ones every 1 m and 5 m. Keep the 0.25 m lines; people line their source drawing up against them.
 - Motion must stop with reduced motion: camera inertia, the selection pulse (the `motion` uniform) and every CSS animation.
 - All lengths are metres. Wall positions are on a 0.25 m grid; door and window sizes are kept to 5 mm (frames are ordered in millimetres) and wall layers to 0.1 mm. Plan `x` is world `x`, plan `y` is world `z`.
 - An opening's width and height are the structural opening. Frame sizes come from `frameSize` with the project's fitting gap; catalogue products are given by frame size.

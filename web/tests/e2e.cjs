@@ -744,7 +744,8 @@ async function drag(page, level, grab, by, lift = 0) {
         return { zones: kids.filter(n => n.type === 'zone').length, slab: kids.filter(n => n.type === 'slab').map(s => s.points.length), walls: walls.length, slanted, doors: ops.filter(o => o.kind === 'door').length, windows: ops.filter(o => o.kind === 'window').length,
           noDoor: likuloka.checks().filter(c => c.node && d.nodes[c.node] && d.nodes[c.node].parent === l.id && c.rule === 'no-door').length };
       }, plan);
-      await frames(page);
+      // the systems draw the new nodes a few frames later, and how many depends on the machine
+      await page.waitForFunction(() => Object.keys(likuloka.getDoc().nodes).every(n => likuloka.world.entities.has(n)), null, { timeout: 5000 }).catch(() => {});
       ok(`Roomlines "${plan.name}" imports with its rooms, a slab, doors and windows`, !r.error && r.zones === rooms[i] && r.slab.length === 1 && r.slab[0] >= 4 && r.doors >= rooms[i] && r.windows >= rooms[i] - 2 && r.noDoor === 0 && (await page.evaluate(() => Object.keys(likuloka.getDoc().nodes).every(n => likuloka.world.entities.has(n)))), r);
       if (plan.rooms) ok('a shaped Roomlines plan keeps its slanted walls', r.slanted >= 5 && r.slab[0] >= 7, r);
     }
@@ -756,6 +757,46 @@ async function drag(page, level, grab, by, lift = 0) {
     ok('the run finished', false, String(e && e.stack || e));
   }
   await context.close();
+
+  // ---- glass and the grid ---------------------------------------------------------------------
+  {
+    const { page: g, context: c, errors } = await open(browser, url);
+    const bar = await g.evaluate(() => {
+      const el = document.querySelector('.bar.glass');
+      const blocked = [];
+      for (let p = el.parentElement; p && p !== document.documentElement; p = p.parentElement) {
+        const cs = getComputedStyle(p);
+        if (cs.filter !== 'none' || cs.opacity !== '1' || cs.maskImage !== 'none' || cs.viewTransitionName !== 'none' || cs.backdropFilter !== 'none') blocked.push(p.className || p.tagName);
+      }
+      return { blur: getComputedStyle(el).backdropFilter, blocked };
+    });
+    ok('the bar is glass: it blurs what is behind it', /blur\(/.test(bar.blur), bar);
+    ok('nothing above the bar stops its glass from seeing the 3D view', bar.blocked.length === 0, bar);
+    await g.click('.menu > summary');
+    await g.click('.menu-items [data-action="project"]');
+    const dialog = await g.evaluate(() => {
+      const el = document.querySelector('dialog[open]');
+      return el && { blur: getComputedStyle(el).backdropFilter, glass: /gradient/.test(getComputedStyle(el).backgroundImage) };
+    });
+    ok('a dialog is glass too', !!dialog && /blur\(/.test(dialog.blur) && dialog.glass, dialog);
+    const grid = await g.evaluate(() => document.querySelector('.status [data-grid]')?.dataset.grid);
+    ok('the status line names the 0.25 m grid', grid === '0.25', grid);
+    ok('no page errors with the glass', errors.length === 0, errors.slice(0, 5));
+    await c.close();
+  }
+  {
+    const context = await browser.newContext({ viewport: { width: 1400, height: 900 }, reducedMotion: 'reduce' });
+    const p2 = await context.newPage();
+    await p2.emulateMedia({ reducedMotion: 'reduce' });
+    const cdp = await context.newCDPSession(p2);
+    await cdp.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-transparency', value: 'reduce' }] });
+    await p2.route(/fonts\.(googleapis|gstatic)\.com/, r => r.abort());
+    await p2.goto(url);
+    await p2.waitForSelector('.bar.glass');
+    const solid = await p2.evaluate(() => ['.bar.glass', '.tree', '.inspector', '.status'].map(s => getComputedStyle(document.querySelector(s)).backdropFilter));
+    ok('with reduced transparency the bar and panels are solid', solid.every(v => v === 'none'), solid);
+    await context.close();
+  }
 
   // ---- phone width -----------------------------------------------------------------------------
   {

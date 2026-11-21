@@ -124,7 +124,7 @@ Data: `projects/{id}` holds `name`, `ownerUid`, `members` (uid to role), `member
 
 ## Design
 
-The night edition: black, with the cobalt of likuloka.com carried into light blue (`--accent` `#6fd0ff`, `--accent-2` `#2f6bff`), Archivo for text and JetBrains Mono for figures. The page background is black with slowly drifting cobalt and light-blue glows and a faint blueprint grid; the panels are translucent over it. In the 3D view, a gradient night sky is drawn by the GPU, with fog into the distance, a glowing grid, a light-blue rim light and vivid room colours on dark floors. The selection glows with a slow light-blue pulse computed in the shader.
+The night edition: black, with the cobalt of likuloka.com carried into light blue (`--accent` `#6fd0ff`, `--accent-2` `#2f6bff`), Archivo for text and JetBrains Mono for figures. The page background is black with slowly drifting cobalt and light-blue glows and a faint blueprint grid; the panels are translucent over it. What floats above the 3D view is glass: the bar, its menu, the labels and the dialogs blur and tint the view behind them, with a lit top edge. With reduced transparency all of it is solid. In the 3D view, a gradient night sky is drawn by the GPU, with fog into the distance, the grid everything snaps to (a line every 0.25 m, brighter every 1 m and 5 m), a light-blue rim light and vivid room colours on dark floors. The selection glows with a slow light-blue pulse computed in the shader.
 
 Motion:
 

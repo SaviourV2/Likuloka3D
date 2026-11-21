@@ -16,7 +16,7 @@ import { world } from '@/ecs/world';
 import { CUT, cutHeight, materials, motion } from '@/ecs/materials';
 import { diff } from '@/scene/ops';
 import { editor, select } from '@/scene/store';
-import type { SceneDoc } from '@/scene/types';
+import { GRID, type SceneDoc } from '@/scene/types';
 import { attachWallTool, rig } from './interact';
 import { SceneRoot } from './nodes';
 import { Labels } from './Labels';
@@ -141,6 +141,9 @@ function fit(box: THREE.Box3, minRadius: number) {
   rig.invalidate();
 }
 
+/** How far the 0.25 m lines reach, in metres; beyond it only the metre lines are drawn. */
+const GRID_SPAN = 80;
+
 function Ground() {
   return (
     <>
@@ -148,8 +151,10 @@ function Ground() {
         onClick={e => { if (e.delta < 4 && editor.getState().tool === 'select') select(null); }}>
         <planeGeometry args={[400, 400]} />
       </mesh>
-      <gridHelper args={[160, 160, '#2f6bff', '#12223d']} position={[0, -0.265, 0]} />
-      <gridHelper args={[160, 32, '#2f6bff', '#1c3a6b']} position={[0, -0.262, 0]} />
+      {/* The grid everything snaps to: a line every 0.25 m, a brighter one every metre and every 5 m. */}
+      <gridHelper args={[GRID_SPAN, GRID_SPAN / GRID, '#12223d', '#0e1a2f']} position={[0, -0.268, 0]} />
+      <gridHelper args={[160, 160, '#2f6bff', '#1d3558']} position={[0, -0.265, 0]} />
+      <gridHelper args={[160, 32, '#2f6bff', '#2c5596']} position={[0, -0.262, 0]} />
     </>
   );
 }
