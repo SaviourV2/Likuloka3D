@@ -305,6 +305,24 @@ function fakeClaude() {
     await close();
   }
 
+  // ---------- 4x. the built-in layouts must not move: walls, openings and furniture against a recording
+  {
+    const { page, close } = await open();
+    const now = await page.evaluate(() => { const R = window.__roomlines, f3 = v => Math.round(v * 1000) / 1000;
+      const seg = (a, b) => [a, b].map(v => v.map(f3)).sort((m, n) => m[0] - n[0] || m[1] - n[1]).flat().join(',');
+      return R.PRESETS.map(pr => { const plan = R.normalizePlan(pr), an = R.analyze(plan), pt = (q, t) => [q.o[0] + q.u[0] * t, q.o[1] + q.u[1] * t];
+        const walls = an.pieces.map(q => (q.ext ? 'E ' : 'I ') + seg(pt(q, q.t0), pt(q, q.t1)) + ' | ' + q.openings.map(o => `${o.kind}:${seg(pt(q, o.t0), pt(q, o.t1))}:${o.sill}:${o.head}`).sort().join(' ')).sort();
+        const furn = R.furnish(plan, an).map(q => q.kind === 'set'
+          ? 'S ' + [q.x0, q.y0, q.x1, q.y1].map(f3).join(',') + ' ' + q.models.map(m => `${m.name}@${f3(m.cx)},${f3(m.cz)} ${f3(m.w)}x${f3(m.d)}x${f3(m.h)} y${f3(m.y0)} r${f3(((m.yaw % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI))}`).join(';') + ' alt' + q.alt.length
+          : 'B ' + [q.x0, q.y0, q.x1, q.y1, q.z0, q.z1].map(f3).join(',') + ' ' + q.kind + ' ' + q.color).sort();
+        return { name: pr.name, walls, furn }; }); });
+    const file = path.join(__dirname, 'layouts.snapshot.json');
+    if (process.env.UPDATE_SNAPSHOT) fs.writeFileSync(file, JSON.stringify(now, null, 1) + '\n');
+    const was = JSON.parse(fs.readFileSync(file, 'utf8'));
+    for (const [i, w] of was.entries()) { const diff = k => w[k].filter(l => !now[i][k].includes(l)).concat(now[i][k].filter(l => !w[k].includes(l))); check(`${w.name}: walls, openings and furniture are where they were recorded`, diff('walls').length === 0 && diff('furn').length === 0, diff('walls').concat(diff('furn')).slice(0, 3)); }
+    await close();
+  }
+
   // ---------- 4d. shaped rooms, the plot, undo, and exports
   {
     const { page, errors, close } = await open();
@@ -357,8 +375,18 @@ function fakeClaude() {
     const wAfter = await walls();
     check('a trimmed home still has doors to every room and one front door', wAfter.entry === 1 && wAfter.doors >= plotTrim.n - 1, wAfter);
 
-    const files = await page.evaluate(async () => { const R = window.roomlines, dxf = R.toDXF(), glb = await R.toGLB(); const head = new Uint8Array(glb.slice(0, 4)); return { dxfOk: dxf.startsWith('0\nSECTION') && dxf.trim().endsWith('EOF') && /\nWALLS\n/.test(dxf) && /\nDOORS\n/.test(dxf) && /\nPLOT\n/.test(dxf) && /\nNAMES\n/.test(dxf), lines: (dxf.match(/\nLINE\n/g) || []).length, glb: String.fromCharCode(...head), bytes: glb.byteLength }; });
+    const resized = await page.evaluate(() => { const R = window.roomlines; R.loadPlan({ rooms: [{ name: 'A', points: [[0, 0], [4, 0], [6, 3], [0, 3]] }] }); const id = R.getPlan().rooms[0].id; R.updateRoom(id, { w: 3, x: 2 }); return R.getPlan().rooms[0]; });
+    check('resizing a shaped room stretches its corners with its box', resized.x === 2 && resized.w === 3 && JSON.stringify(resized.points) === '[[2,0],[4,0],[5,3],[2,3]]', resized);
+    const notch = await page.evaluate(() => { const R = window.__roomlines, pip = (P, x, y) => { let c = false; for (let i = 0, j = P.length - 1; i < P.length; j = i++) if ((P[i][1] > y) !== (P[j][1] > y) && x < (P[j][0] - P[i][0]) * (y - P[i][1]) / (P[j][1] - P[i][1]) + P[i][0]) c = !c; return c; };
+      window.roomlines.loadPlan({ name: 'L', rooms: [{ name: 'Living room', type: 'living', points: [[0, 0], [8, 0], [8, 3], [3, 3], [3, 7], [0, 7]] }] }); const P = R.outline(R.state.plan.rooms[0]); let n = 0, bad = 0;
+      for (const q of R.furnish(R.state.plan, R.state.an)) { const boxes = q.kind === 'set' ? q.alt.concat([q]) : [q]; for (const b of boxes) { n++; const c = Math.cos(b.yaw), sn = Math.sin(b.yaw); for (const [i, j] of [[-0.45, -0.45], [0.45, -0.45], [0.45, 0.45], [-0.45, 0.45], [0, 0]]) { const x = b.cx + i * b.lw * c + j * b.ld * sn, y = b.cz - i * b.lw * sn + j * b.ld * c; if (!pip(P, x, y)) { bad++; break; } } } }
+      return { n, bad }; });
+    check('in an L-shaped room no piece or rug hangs over the inward corner', notch.n > 10 && notch.bad === 0, notch);
+    await page.click('[data-preset="2"]'); await page.waitForTimeout(300);
+    await page.evaluate(() => { const R = window.roomlines; R.setPlot([[-1, -1], [12, 1], [11, 9], [-2, 8]]); R.alignToPlot(); R.trimToPlot(1.5); R.select(R.getPlan().rooms[0].id); });
+    const files = await page.evaluate(async () => { const R = window.roomlines, dxf = R.toDXF(), glb = await R.toGLB(); const head = new Uint8Array(glb.slice(0, 4)); const tall = await new Promise(ok => new THREE.GLTFLoader().parse(glb.slice(0), '', g => { const b = new THREE.Box3().setFromObject(g.scene); ok({ top: +b.max.y.toFixed(2), wide: +(b.max.x - b.min.x).toFixed(1) }); }, () => ok(null))); const cutStill = R.getState().view.cut && window.__roomlines.view.stats().models > 0; return { tall, cutStill, dxfOk: dxf.startsWith('0\nSECTION') && dxf.trim().endsWith('EOF') && /\nWALLS\n/.test(dxf) && /\nDOORS\n/.test(dxf) && /\nPLOT\n/.test(dxf) && /\nNAMES\n/.test(dxf), lines: (dxf.match(/\nLINE\n/g) || []).length, glb: String.fromCharCode(...head), bytes: glb.byteLength }; });
     check('the plan exports as DXF with layers and as a GLB model', files.dxfOk && files.lines > 40 && files.glb === 'glTF' && files.bytes > 50000, files);
+    check('the GLB has full-height walls even while the view is cut, and reads back', files.tall && files.tall.top >= 2.6 && files.tall.top < 2.7 && files.tall.wide > 8 && files.cutStill, files.tall);
     const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 8000 }).catch(() => null), page.evaluate(() => { document.querySelector('#dataBox').open = true; document.querySelector('#saveDxf').click(); })]);
     check('Save .dxf downloads a file outside Claude', !!dl && /\.dxf$/.test(dl.suggestedFilename()) && errors.length === 0, [dl && dl.suggestedFilename(), errors]);
     await close();

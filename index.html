@@ -745,9 +745,12 @@ const sides = (ctx, score, skip = []) => framesOf(ctx).filter(f => !skip.include
 const facing = (ctx, fr) => sideInfo(ctx, framesOf(ctx).filter(f => f !== fr).reduce((best, f) => (f.n[0] * fr.n[0] + f.n[1] * fr.n[1] < best.n[0] * fr.n[0] + best.n[1] * fr.n[1] - 1e-9 ? f : best)));
 function put(ctx, fr, a, d, item) {
   if (a < 0.04 || a + item.w > fr.len - 0.04 || d < 0 || d + item.dep > fr.depth - 0.04) return false;
+  if (ctx.r.points) { // a slanted wall or an inward corner may cut into the footprint, so test points all over it, not just its corners
+    for (let i = 0; i <= 4; i++) for (let j = 0; j <= 4; j++) { const q = fr.at(a + 0.01 + (item.w - 0.02) * i / 4, d + 0.01 + (item.dep - 0.02) * j / 4); if (!inPoly(ctx.r.points, q[0], q[1], 0.02)) return false; }
+  }
   if (!item.soft) {
     const box = area(fr, a + 0.01, a + item.w - 0.01, d + 0.01, d + item.dep - 0.01);
-    if (ctx.r.points && !box.pts.every(q => inPoly(ctx.r.points, q[0], q[1], 0.02))) return false; // a slanted wall may cut the corner off
+
     if (ctx.placed.some(p => hit(p, box)) || ctx.an.zones.some(z => hit(z, box))) return false;
     if (item.tall && ctx.an.winZones.some(z => hit(z, box))) return false;
     ctx.placed.push(box);
@@ -1433,11 +1436,11 @@ const view = (() => {
     const w = canvas.clientWidth, h = canvas.clientHeight; if (!w || !h) return;
     renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix(); shift(); dirty = true;
   }
-  function build() {
+  function build(forExport) { // forExport: the model as built, with full-height walls and no selection edging
     if (!state.plan || !state.an) return;
     if (group) { scene.remove(group); group.traverse(o => { if (o.geometry && o.userData.own) o.geometry.dispose(); }); }
     group = new THREE.Group(); floors = []; stats = { skins: 0, tiled: 0, models: 0, boxes: 0 };
-    const H = state.cut ? CUT_H : WALL_H, wallMat = mat(0xf2f0eb), capMat = mat(0x2b3742), b = bounds(state.plan);
+    const cutNow = state.cut && !forExport, H = cutNow ? CUT_H : WALL_H, wallMat = mat(0xf2f0eb), capMat = mat(0x2b3742), b = bounds(state.plan);
     const box = (x0, x1, y0, y1, z0, z1, m, cast = true) => {
       const me = new THREE.Mesh(unit, m); me.scale.set(x1 - x0, y1 - y0, z1 - z0); me.position.set((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2);
       me.castShadow = cast; me.receiveShadow = true; group.add(me); return me;
@@ -1507,7 +1510,7 @@ const view = (() => {
       seg(cur, p.t1 + half, 0, WALL_H);
     }
     const drawPart = f => {
-      if (f.z0 >= H - 0.2 && state.cut) return;
+      if (f.z0 >= H - 0.2 && cutNow) return;
       stats.boxes++;
       if (f.kind === 'box') obox(f.cx, f.cz, f.lw, f.ld, f.z0, f.z1, f.yaw, mat(f.color));
       else if (f.kind === 'glass') { const top = Math.min(f.z1, H + 0.5); if (top > f.z0) obox(f.cx, f.cz, f.lw, f.ld, f.z0, top, f.yaw, glass, false); }
@@ -1518,7 +1521,7 @@ const view = (() => {
     };
     // A model is stretched to the box the layout gave it, so it always fits the room the way the boxes did.
     const drawModel = (m, tint) => {
-      if (m.y0 >= H - 0.2 && state.cut) return;
+      if (m.y0 >= H - 0.2 && cutNow) return;
       const src = modelLib.get(m.name), inner = src.scene.clone(true), holder = new THREE.Group();
       inner.traverse(o => { if (o.isMesh) { o.material = lit(o.userData.src, tint); o.castShadow = true; o.receiveShadow = true; } });
       inner.position.set(-src.centre.x, -src.min.y, -src.centre.z);
@@ -1530,7 +1533,7 @@ const view = (() => {
       else if (f.models.every(m => modelLib.has(m.name))) f.models.forEach(m => drawModel(m, f.tint));
       else f.alt.forEach(drawPart);
     }
-    const s = selected();
+    const s = forExport ? null : selected();
     if (s) { // the selected room is edged on the floor, side by side
       const P = outline(s);
       P.forEach((q, i) => { const c = P[(i + 1) % P.length], len = Math.hypot(c[0] - q[0], c[1] - q[1]); const m = obox((q[0] + c[0]) / 2, (q[1] + c[1]) / 2, len, 0.05, 0.012, 0.03, Math.atan2(-(c[1] - q[1]), c[0] - q[0]), selMat, false); m.receiveShadow = false; });
@@ -1603,7 +1606,10 @@ const view = (() => {
   theme();
   return { build, fit() { resize(); fit(); }, resize, setInsets(i) { Object.assign(inset, i); }, reframe() { if (framed) { resize(); fit(); } }, stats: () => stats,
     // the model as it is drawn now, as one binary glTF file
-    toGLB: () => new Promise((ok, no) => { if (!THREE.GLTFExporter || !group) { no(new Error('no exporter')); return; } try { new THREE.GLTFExporter().parse(group, ok, { binary: true }); } catch (e) { no(e); } }) };
+    toGLB: () => new Promise((ok, no) => {
+      if (!THREE.GLTFExporter || !state.plan) { no(new Error('no exporter')); return; }
+      try { build(true); new THREE.GLTFExporter().parse(group, glb => { build(); ok(glb); }, { binary: true }); } catch (e) { build(); no(e); }
+    }) };
 })();
 
 /* ---------- uploaded drawing ---------- */
