@@ -2,7 +2,8 @@
 /** Properties of the selected node. Each field commits one undo step when it changes. */
 import { useEffect, useState } from 'react';
 import { addZone, area, centreOnPlot, plotAround, removePlotCorner, rename, setPlot, updateSettings, setWallLength, updateLevel, updateOpening, updateSlab, updateWall, updateZone } from '@/scene/ops';
-import { commit, isClient, removeSelected, useEditor } from '@/scene/store';
+import { commit, isClient, patchUnderlay, removeSelected, scaleUnderlay, setInteraction, setUnderlay, useEditor } from '@/scene/store';
+import { fromDxf, importDxf, parseDxf, PLOT_LAYER, ROOM_LAYER, type DxfChoice, type DxfDrawing, type DxfUnit } from '@/scene/dxfin';
 import { FLOOR_FINISHES, FLOOR_KEYS, ZONE_OPTIONS, type ZoneOption, type FloorFinish, FINISH_LABELS, frameSize, OPENING_FINISHES, ROOM_TYPES, type OpeningFinish, type OpeningNode, type RoomType, type SceneDoc, type SceneNode, type Vec2, type WallNode } from '@/scene/types';
 import { applyProduct, applyWallType, formatPrice, productFor, wallTypeFor } from '@/scene/catalogue';
 import { checks } from '@/scene/checks';
@@ -79,7 +80,9 @@ export default function Inspector() {
   const node = useEditor(s => (s.selection ? s.doc.nodes[s.selection] : null) ?? null);
   const error = useEditor(s => s.error);
   const plotTool = useEditor(s => s.tool === 'plot');
+  const traceTool = useEditor(s => s.tool === 'trace');
   if (!node && plotTool) return <PlotPanel error={error} />;
+  if (!node && traceTool) return <TracePanel error={error} />;
   if (!node) {
     return (
       <aside className="inspector" aria-label="Inspector">
@@ -295,6 +298,116 @@ function Issues({ id }: { id: string }) {
 }
 
 /** A room's or slab's size: width by depth when it is a rectangle, and its area. */
+/** Reads a picture and makes it small enough to keep in memory: at most 2400 px on its long side. */
+function readPicture(file: File): Promise<{ url: string; aspect: number }> {
+  return new Promise((resolve, reject) => {
+    const src = URL.createObjectURL(file), img = new Image();
+    img.onload = () => {
+      const k = Math.min(1, 2400 / Math.max(img.naturalWidth, img.naturalHeight));
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(img.naturalWidth * k)); canvas.height = Math.max(1, Math.round(img.naturalHeight * k));
+      const g = canvas.getContext('2d');
+      URL.revokeObjectURL(src);
+      if (!g) { reject(new Error('This browser cannot read the picture.')); return; }
+      g.fillStyle = '#fff'; g.fillRect(0, 0, canvas.width, canvas.height); // a see-through drawing gets a white sheet
+      g.drawImage(img, 0, 0, canvas.width, canvas.height);
+      resolve({ url: canvas.toDataURL('image/jpeg', 0.85), aspect: canvas.width / canvas.height });
+    };
+    img.onerror = () => { URL.revokeObjectURL(src); reject(new Error('That file is not a picture this browser can open. Use PNG or JPG; for a PDF, save the page as a picture first.')); };
+    img.src = src;
+  });
+}
+
+/**
+ * The trace tool's panel. A picture is laid on the ground to draw over, and
+ * given its true size from one known length. A DXF file is read as it is: its
+ * plot and room outlines come in at their real sizes.
+ */
+function TracePanel({ error }: { error: string | null }) {
+  const u = useEditor(s => s.underlay);
+  const marks = useEditor(s => (s.interaction.kind === 'scaling-underlay' ? s.interaction : null));
+  const [drawing, setDrawing] = useState<DxfDrawing | null>(null);
+  const [choice, setChoice] = useState<DxfChoice>({ unit: 'mm', plot: null, rooms: null });
+  const [lines, setLines] = useState(true);
+  const [said, setSaid] = useState<{ text: string; bad?: boolean } | null>(null);
+  const open = async (file: File | undefined) => {
+    if (!file) return;
+    setSaid(null);
+    try {
+      if (/\.dxf$/i.test(file.name)) {
+        const d = parseDxf(await file.text());
+        const closed = d.layers.filter(l => l.closed.length);
+        setDrawing(d);
+        setChoice({ unit: d.unit, plot: closed.find(l => PLOT_LAYER.test(l.name))?.name ?? null, rooms: closed.find(l => ROOM_LAYER.test(l.name) && !PLOT_LAYER.test(l.name))?.name ?? null });
+      } else {
+        const p = await readPicture(file);
+        setDrawing(null);
+        setUnderlay({ kind: 'image', ...p, at: [0, 0], width: 20, opacity: 0.45, shown: true });
+        rig.invalidate();
+        setSaid({ text: 'The picture is on the ground, 20 m wide for now. Give it its true size from a length you know, then drag it into place.' });
+      }
+    } catch (e) { setSaid({ text: e instanceof Error ? e.message : 'That file could not be read.', bad: true }); }
+  };
+  const bring = () => {
+    if (!drawing) return;
+    let got = { plot: false, rooms: 0, pools: 0 };
+    const done = commit(d => { const [next, g] = importDxf(d, drawing, choice); got = g; return next; }, 'Import drawing');
+    if (!done) return;
+    if (lines) setUnderlay({ kind: 'lines', segments: fromDxf(drawing, choice).segments, at: [0, 0], opacity: 0.7, shown: true });
+    setDrawing(null);
+    rig.invalidate();
+    const parts = [got.plot && 'the plot', got.rooms && `${got.rooms} room${got.rooms === 1 ? '' : 's'}`, got.pools && `${got.pools} pool${got.pools === 1 ? '' : 's'}`].filter(Boolean);
+    setSaid({ text: parts.length ? `Brought in ${parts.join(', ')}. One undo takes it back.` : lines ? 'Its lines are on the ground to draw over. Nothing was added to the project.' : 'Nothing was chosen to bring in.' });
+  };
+  const closed = drawing ? drawing.layers.filter(l => l.closed.length) : [];
+  const k = { mm: 0.001, cm: 0.01, m: 1 }[choice.unit];
+  return (
+    <aside className="inspector" aria-label="Inspector" data-type="trace">
+      <h2>Trace a drawing</h2>
+      <p className="hint">A picture (PNG or JPG) is laid on the ground to draw over. A DXF file from AutoCAD is read exactly: its plot and room outlines come in at their real sizes.</p>
+      <label className="file-button">Choose a picture or DXF file…<input type="file" accept="image/png,image/jpeg,image/webp,.dxf" data-action="trace-file" onChange={e => { void open(e.target.files?.[0]); e.target.value = ''; }} /></label>
+      {said && <p className={said.bad ? 'error' : 'notice'} role="status" data-trace-said>{said.text}</p>}
+      {drawing && (
+        <div className="fields" data-trace="dxf">
+          <dl className="measures"><dt>Size</dt><dd data-measure="dxf-size">{fmt(drawing.size[0] * k)} × {fmt(drawing.size[1] * k)} m</dd></dl>
+          <label className="field wide"><span>Drawn in</span>
+            <select value={choice.unit} aria-label="Drawing unit" onChange={e => setChoice({ ...choice, unit: e.target.value as DxfUnit })}>
+              <option value="mm">millimetres</option><option value="cm">centimetres</option><option value="m">metres</option>
+            </select><i aria-hidden="true" /></label>
+          <p className="hint">{drawing.stated ? 'The file states its unit.' : 'The file does not state its unit; this one is a guess from its size. Check the size above.'}</p>
+          <label className="field wide"><span>Plot</span>
+            <select value={choice.plot ?? ''} aria-label="Plot layer" onChange={e => setChoice({ ...choice, plot: e.target.value || null })}>
+              <option value="">None</option>{closed.map(l => <option key={l.name} value={l.name}>{l.name} ({l.closed.length})</option>)}
+            </select><i aria-hidden="true" /></label>
+          <label className="field wide"><span>Rooms</span>
+            <select value={choice.rooms ?? ''} aria-label="Rooms layer" onChange={e => setChoice({ ...choice, rooms: e.target.value || null })}>
+              <option value="">None</option>{closed.map(l => <option key={l.name} value={l.name}>{l.name} ({l.closed.length})</option>)}
+            </select><i aria-hidden="true" /></label>
+          <p className="hint">Each closed polyline on the rooms layer becomes a room, named by the text inside it. The largest on the plot layer becomes the plot.{closed.length ? '' : ' This file has no closed polylines, so only its lines can be shown.'}</p>
+          <label className="check"><input type="checkbox" checked={lines} onChange={e => setLines(e.target.checked)} /> Show its lines on the ground to draw over</label>
+          <button type="button" className="add" data-action="dxf-import" onClick={bring}>Bring it in</button>
+        </div>
+      )}
+      {u && (
+        <div className="fields" data-trace={u.kind}>
+          <label className="check"><input type="checkbox" checked={u.shown} data-action="trace-shown" onChange={e => { patchUnderlay({ shown: e.target.checked }); rig.invalidate(); }} /> Show the drawing</label>
+          <label className="field wide"><span>Strength</span>
+            <input type="range" min={10} max={100} step={5} value={Math.round(u.opacity * 100)} aria-label="Strength of the drawing" onChange={e => { patchUnderlay({ opacity: Number(e.target.value) / 100 }); rig.invalidate(); }} /><i aria-hidden="true" /></label>
+          {u.kind === 'image' && <>
+            <Mm label="Width" hint="The true width of what the whole picture shows" value={u.width} step={250} onCommit={v => { patchUnderlay({ width: v }); rig.invalidate(); }} />
+            {!marks && <button type="button" className="add" data-action="trace-scale" onClick={() => { setInteraction({ kind: 'scaling-underlay', a: null, b: null }); rig.invalidate(); }}>Set its size from a known length</button>}
+            {marks && !marks.b && <p className="notice" role="status">Click the {marks.a ? 'other end' : 'first end'} of a length you know on the picture, such as a dimensioned wall.</p>}
+            {marks?.a && marks.b && <Mm label="That length is" value={0} step={50} onCommit={v => { if (!scaleUnderlay(marks.a!, marks.b!, v)) setSaid({ text: 'That length would make the picture smaller than 0.5 m or larger than 2 km.', bad: true }); rig.invalidate(); }} />}
+            <p className="hint">Drag the picture to move it. It stays in this browser tab only: it is not saved with the project.</p>
+          </>}
+          <p><button type="button" className="danger" data-action="trace-remove" onClick={() => { setUnderlay(null); rig.invalidate(); }}>Remove the drawing</button></p>
+        </div>
+      )}
+      {error && <p className="error" role="alert">{error}</p>}
+    </aside>
+  );
+}
+
 /** The plot: shown while the plot tool is on. Corners are set by dragging; this panel gives the figures. */
 function PlotPanel({ error }: { error: string | null }) {
   const plot = useEditor(s => s.doc.plot);
@@ -366,7 +479,9 @@ function Placement({ opening }: { opening: OpeningNode }) {
     <>
       <Mm label="From wall start" hint="From the start of the wall to the near edge of the opening" value={fromStart} step={25}
         onCommit={v => edit(d => updateOpening(d, opening.id, { offset: v + opening.width / 2 }), 'Move opening')} />
-      <p className="figure">To the wall end <b data-measure="to-end">{mm(toEnd)} mm</b></p>
+      <Mm label="To wall end" hint="From the far edge of the opening to the end of the wall. Changing it slides the opening." value={toEnd} step={25}
+        onCommit={v => edit(d => updateOpening(d, opening.id, { offset: wallLength - v - opening.width / 2 }), 'Move opening')} />
+      <p className="figure" hidden>To the wall end <b data-measure="to-end">{mm(toEnd)} mm</b></p>
     </>
   );
 }

@@ -27,10 +27,24 @@ export type Interaction =
   /** A click on a wall puts a door or window there. */
   | { kind: 'placing'; what: OpeningKind }
   /** A corner of the plot follows the pointer. */
-  | { kind: 'dragging-plot' };
+  | { kind: 'dragging-plot' }
+  /** The traced picture follows the pointer. */
+  | { kind: 'dragging-underlay' }
+  /** Two clicks on the traced picture mark a length the person knows, to set its scale. */
+  | { kind: 'scaling-underlay'; a: Vec2 | null; b: Vec2 | null };
 
 /** `plot` shows the plot's corners so they can be dragged; nothing else is selected while it is on. */
-export type Tool = 'select' | 'wall' | 'door' | 'window' | 'plot';
+export type Tool = 'select' | 'wall' | 'door' | 'window' | 'plot' | 'trace';
+
+/**
+ * A drawing shown on the ground to draw over: a picture, placed by its top-left
+ * corner and its width in metres, or the lines of a CAD file at their true
+ * size. It is not part of the document: it is not saved with the project,
+ * undone or sent to the cloud.
+ */
+export type Underlay =
+  | { kind: 'image'; url: string; aspect: number; at: Vec2; width: number; opacity: number; shown: boolean }
+  | { kind: 'lines'; segments: readonly (readonly [Vec2, Vec2])[]; at: Vec2; opacity: number; shown: boolean };
 
 export interface BuildingView { mode: LevelMode; solo: Id | null }
 
@@ -59,6 +73,8 @@ export interface EditorState {
   measure: boolean;
   /** Furniture drawn in every room, worked out from the rooms. A plain setting. */
   furniture: boolean;
+  /** The drawing being traced, or null. View state. */
+  underlay: Underlay | null;
   /**
    * The open project: its id in browser storage, and the document as it was
    * last saved. The project has unsaved changes when `doc !== saved`.
@@ -90,6 +106,7 @@ const initial: EditorState = {
   cut: true,
   measure: false,
   furniture: true,
+  underlay: null,
   project: { id: 'project-new', saved: null, savedAt: null, where: 'local' },
   catalogue: BUNDLED,
   role: { kind: 'designer' },
@@ -272,7 +289,7 @@ export function setTool(tool: Tool) {
   const level = s.activeLevel;
   set({
     tool,
-    ...(tool === 'plot' ? { selection: null } : {}),
+    ...(tool === 'plot' || tool === 'trace' ? { selection: null } : {}),
     interaction: tool === 'wall' && level ? { kind: 'drawing-wall', level, from: null, to: null }
       : tool === 'door' || tool === 'window' ? { kind: 'placing', what: tool }
       : { kind: 'idle' },
@@ -289,6 +306,33 @@ export function clearError() {
 
 export function setCut(cut: boolean) {
   set({ cut });
+}
+
+export function setUnderlay(underlay: Underlay | null) {
+  set({ underlay, ...(underlay ? {} : { interaction: { kind: 'idle' } as Interaction }) });
+}
+
+/** Changes the traced drawing's place, size, opacity or whether it shows. */
+export function patchUnderlay(patch: { at?: Vec2; width?: number; opacity?: number; shown?: boolean }) {
+  const u = state().underlay;
+  if (!u) return;
+  const next = { ...u, ...patch } as Underlay;
+  if (next.kind === 'image' && !(next.width >= 0.5 && next.width <= 2000)) return;
+  next.opacity = Math.min(1, Math.max(0.1, next.opacity));
+  set({ underlay: next });
+}
+
+/**
+ * Sets the picture's scale from a length marked on it: the two points are
+ * `length` metres apart, and the first of them stays where it is.
+ */
+export function scaleUnderlay(a: Vec2, b: Vec2, length: number): boolean {
+  const u = state().underlay, d = Math.hypot(b[0] - a[0], b[1] - a[1]);
+  if (u?.kind !== 'image' || d < 1e-6 || !(length > 0)) return false;
+  const k = length / d, width = u.width * k;
+  if (!(width >= 0.5 && width <= 2000)) return false;
+  set({ underlay: { ...u, width, at: [a[0] + (u.at[0] - a[0]) * k, a[1] + (u.at[1] - a[1]) * k] }, interaction: { kind: 'idle' } });
+  return true;
 }
 
 export function setFurniture(furniture: boolean) {

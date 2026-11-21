@@ -10,7 +10,7 @@ import type { ThreeEvent } from '@react-three/fiber';
 import type { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { world } from '@/ecs/world';
 import { ancestor, addOpeningAt, addWall, insertPlotCorner, insertPoint, movePlotCorner, movePoint, moveWallEnd, offsetWall, setOrigin, slideOpening, snapPoint, translate } from '@/scene/ops';
-import { begin, cancel, commit, editor, end, preview, select, setInteraction, setTool, type Interaction } from '@/scene/store';
+import { begin, cancel, commit, editor, end, preview, select, setInteraction, setTool, type Interaction, patchUnderlay } from '@/scene/store';
 import type { Id, SceneDoc, Vec2 } from '@/scene/types';
 
 interface Rig {
@@ -135,6 +135,43 @@ export function startPlotDrag(e: ThreeEvent<PointerEvent>, index: number, insert
   window.addEventListener('pointerup', up);
   window.addEventListener('pointercancel', abort);
   window.addEventListener('keydown', key, true);
+}
+
+/** A press on the traced picture: marks a point while its scale is being set, otherwise drags it. */
+export function pressUnderlay(e: ThreeEvent<PointerEvent>) {
+  const s = editor.getState();
+  if (e.button !== 0 || s.tool !== 'trace' || !s.underlay) return;
+  e.stopPropagation();
+  const from = groundAt(e.clientX, e.clientY);
+  if (!from) return;
+  if (s.interaction.kind === 'scaling-underlay') {
+    const i = s.interaction;
+    setInteraction(i.a && !i.b ? { ...i, b: from } : { kind: 'scaling-underlay', a: from, b: null });
+    rig.invalidate();
+    return;
+  }
+  const start = s.underlay.at;
+  setInteraction({ kind: 'dragging-underlay' });
+  if (rig.controls) rig.controls.enabled = false;
+  const move = (ev: PointerEvent) => {
+    const to = groundAt(ev.clientX, ev.clientY);
+    if (to) patchUnderlay({ at: plus(start, from, to) });
+    rig.invalidate();
+  };
+  const stop = (keep: boolean) => {
+    window.removeEventListener('pointermove', move);
+    window.removeEventListener('pointerup', up);
+    window.removeEventListener('pointercancel', abort);
+    if (!keep) patchUnderlay({ at: start });
+    setInteraction({ kind: 'idle' });
+    if (rig.controls) rig.controls.enabled = true;
+    rig.invalidate();
+  };
+  const up = () => stop(true);
+  const abort = () => stop(false);
+  window.addEventListener('pointermove', move);
+  window.addEventListener('pointerup', up);
+  window.addEventListener('pointercancel', abort);
 }
 
 // ---- the edits each handle drives -------------------------------------------------

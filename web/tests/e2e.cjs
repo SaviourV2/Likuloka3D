@@ -946,6 +946,80 @@ async function drag(page, level, grab, by, lift = 0) {
     await c.close();
   }
 
+  // ---- tracing a picture, and reading a DXF drawing ---------------------------------------------
+  {
+    const { page: f, context: c, errors } = await open(browser, url);
+    const fixture = n => path.join(__dirname, 'fixtures', n);
+    await f.keyboard.press('t');
+    ok('T turns the trace tool on', (await state(f)).tool === 'trace' && (await f.getAttribute('.inspector', 'data-type')) === 'trace');
+    // a DXF drawing in millimetres, with Indonesian layer and room names
+    await f.setInputFiles('[data-action="trace-file"]', fixture('villa.dxf'));
+    await f.waitForSelector('[data-trace="dxf"]');
+    const seen = await f.evaluate(() => ({ size: document.querySelector('[data-measure="dxf-size"]').textContent, unit: document.querySelector('select[aria-label="Drawing unit"]').value, plot: document.querySelector('select[aria-label="Plot layer"]').value, rooms: document.querySelector('select[aria-label="Rooms layer"]').value }));
+    ok('a DXF file shows its true size, its unit and the layers found', seen.size === '24.50 × 18.00 m' && seen.unit === 'mm' && seen.plot === 'BATAS LAHAN' && seen.rooms === 'RUANG', seen);
+    const before = await f.evaluate(() => likuloka.getDoc().roots.length);
+    await f.click('[data-action="dxf-import"]');
+    await frames(f);
+    const got = await f.evaluate(n => {
+      const d = likuloka.getDoc(), b = d.nodes[d.roots[n]], l = b && d.nodes[b.children[0]], kids = l ? l.children.map(k => d.nodes[k]) : [];
+      const zones = kids.filter(k => k.type === 'zone'), size = z => { const xs = z.points.map(p => p[0]), ys = z.points.map(p => p[1]); return [Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)]; };
+      const side = (a, b2) => Math.round(Math.hypot(b2[0] - a[0], b2[1] - a[1]) * 1000);
+      return { roots: d.roots.length, plot: d.plot && d.plot.length, side: d.plot && Math.max(...d.plot.map((p, i) => side(p, d.plot[(i + 1) % d.plot.length]))), rooms: zones.map(z => `${z.name}:${z.use}:${size(z).join('x')}`).sort(), walls: kids.filter(k => k.type === 'wall').length,
+        doors: kids.filter(k => k.type === 'wall').flatMap(w => w.children).length, underlay: likuloka.underlay() && likuloka.underlay().kind, inside: likuloka.checks().filter(i => i.rule === 'outside-plot' && i.node === b.id).length, undo: likuloka.getState().undo };
+    }, before);
+    ok('its plot comes in at its real size', got.plot === 4 && got.side === 24047, got);
+    ok('its rooms come in with their names, uses and sizes', JSON.stringify(got.rooms) === JSON.stringify(['Dapur:kitchen:5x5', 'KM:bathroom:2.5x4.5', 'Kamar Tidur:bedroom:5x4.5', 'Kolam Renang:pool:6x4', 'Ruang Keluarga:living:6x5']), got.rooms);
+    ok('with walls, doors and windows, and the pool left open', got.walls >= 8 && got.doors >= 4 && got.inside === 0, got);
+    ok('its lines lie on the ground to draw over, and it is one undo step', got.underlay === 'lines' && got.undo === 1, got);
+    await f.keyboard.press('Control+z');
+    ok('which undo takes back', (await f.evaluate(() => [likuloka.getDoc().roots.length, likuloka.getDoc().plot])).join() === `${before},`);
+    // the same drawing as R12, which states no unit
+    await f.setInputFiles('[data-action="trace-file"]', fixture('villa-r12.dxf'));
+    await f.waitForSelector('[data-trace="dxf"]');
+    const r12 = await f.evaluate(() => ({ unit: document.querySelector('select[aria-label="Drawing unit"]').value, size: document.querySelector('[data-measure="dxf-size"]').textContent, rooms: document.querySelector('select[aria-label="Rooms layer"]').value }));
+    ok('an R12 file without a unit is read as millimetres from its size', r12.unit === 'mm' && r12.size === '24.50 × 18.00 m' && r12.rooms === 'RUANG', r12);
+    await f.selectOption('select[aria-label="Drawing unit"]', 'cm');
+    ok('changing the unit changes the size shown', (await f.textContent('[data-measure="dxf-size"]')) === '245.00 × 180.00 m');
+    const badFile = await f.evaluate(() => { try { likuloka.parseDxf('not a drawing\nat all\n'); return 'read'; } catch (e) { return e.message; } });
+    ok('a file that is not a text DXF is refused in plain words', /not a text DXF/.test(badFile), badFile);
+    // a picture
+    await f.setInputFiles('[data-action="trace-file"]', fixture('plan.png'));
+    await f.waitForSelector('[data-trace="image"]');
+    const pic = await f.evaluate(() => { const u = likuloka.underlay(); return { kind: u.kind, width: u.width, aspect: Math.round(u.aspect * 100) / 100, doc: JSON.stringify(likuloka.getDoc()).includes('data:image') }; });
+    ok('a picture is laid on the ground and kept out of the project', pic.kind === 'image' && pic.width === 20 && pic.aspect === 1.33 && !pic.doc, pic);
+    // the 10 m wall in the picture runs from 100 to 700 px of 800: mark it and say it is 10 000 mm
+    await f.click('[data-action="trace-scale"]');
+    const ends = await f.evaluate(() => [likuloka.projectGround(2.5, 12), likuloka.projectGround(17.5, 12)]);
+    await f.mouse.click(ends[0].x, ends[0].y); await f.mouse.click(ends[1].x, ends[1].y);
+    await frames(f);
+    const marked = (await state(f)).interaction;
+    ok('two clicks mark a length on the picture', marked.kind === 'scaling-underlay' && marked.a && marked.b && Math.abs(Math.hypot(marked.b[0] - marked.a[0], marked.b[1] - marked.a[1]) - 15) < 0.3, marked);
+    await f.fill('.inspector input[aria-label="That length is"]', '10000');
+    await f.keyboard.press('Enter');
+    const scaled = await f.evaluate(() => likuloka.underlay().width);
+    ok('typing the real length gives the picture its true size', Math.abs(scaled - 13.33) < 0.3 && (await state(f)).interaction.kind === 'idle', scaled);
+    const at0 = await f.evaluate(() => likuloka.underlay().at);
+    const grab = await f.evaluate(() => { const u = likuloka.underlay(); return [likuloka.projectGround(u.at[0] + 3, u.at[1] + 3), likuloka.projectGround(u.at[0] + 5, u.at[1] + 4)]; });
+    await f.mouse.move(grab[0].x, grab[0].y); await f.mouse.down(); await f.mouse.move(grab[1].x, grab[1].y, { steps: 5 }); await f.mouse.up();
+    const at1 = await f.evaluate(() => likuloka.underlay().at);
+    ok('dragging the picture moves it, without an undo step', Math.abs(at1[0] - at0[0] - 2) < 0.3 && Math.abs(at1[1] - at0[1] - 1) < 0.3 && (await state(f)).undo === 0, [at0, at1]);
+    await f.keyboard.press('Escape');
+    const sel = await f.evaluate(() => { const u = likuloka.underlay(); return likuloka.projectGround(u.at[0] + 1, u.at[1] + 1); });
+    await f.mouse.move(sel.x, sel.y); await f.mouse.down(); await f.mouse.move(sel.x + 60, sel.y, { steps: 3 }); await f.mouse.up();
+    ok('with another tool the picture does not take the pointer', JSON.stringify(await f.evaluate(() => likuloka.underlay().at)) === JSON.stringify(at1));
+    await f.keyboard.press('t');
+    await f.click('[data-action="trace-remove"]');
+    ok('the drawing can be removed', (await f.evaluate(() => likuloka.underlay())) === null);
+    // a door is set out from either end of its wall
+    const door = await f.evaluate(() => { const d = likuloka.getDoc(), o = Object.values(d.nodes).find(n => n.type === 'opening' && n.kind === 'door'), w = d.nodes[o.parent]; likuloka.setTool('select'); likuloka.select(o.id); return { id: o.id, len: Math.hypot(w.b[0] - w.a[0], w.b[1] - w.a[1]), width: o.width }; });
+    await f.fill('.inspector input[aria-label="To wall end"]', '6000');
+    await f.keyboard.press('Enter');
+    const moved = await f.evaluate(i => likuloka.getDoc().nodes[i].offset, door.id);
+    ok('typing the distance to the wall end slides a door there', Math.abs(door.len - moved - door.width / 2 - 6) < 0.006, { door, moved });
+    ok('no page errors while tracing', errors.length === 0, errors.slice(0, 5));
+    await c.close();
+  }
+
   // ---- glass and the grid ---------------------------------------------------------------------
   {
     const { page: g, context: c, errors } = await open(browser, url);

@@ -23,6 +23,7 @@ import { dxfFile } from '@/scene/dxf';
 import { rememberedName } from '@/scene/versions';
 import { checks } from '@/scene/checks';
 import { furnishLevel } from '@/scene/furnish';
+import { fromDxf, importDxf, parseDxf } from '@/scene/dxfin';
 import { compare, versionStore } from '@/scene/versions';
 
 // three.js and WebGPU need the browser, so the viewport is never rendered on the server.
@@ -151,6 +152,7 @@ function Toolbar({ menu }: { menu: [string, string, () => void][] }) {
         <button type="button" role="radio" aria-checked={tool === 'door'} data-tool="door" title="Add doors (D)" onClick={() => store.setTool('door')}>Door</button>
         <button type="button" role="radio" aria-checked={tool === 'window'} data-tool="window" title="Add windows (N)" onClick={() => store.setTool('window')}>Window</button>
         <button type="button" role="radio" aria-checked={tool === 'plot'} data-tool="plot" title="The plot: the boundary of the land (P)" onClick={() => store.setTool('plot')}>Plot</button>
+        <button type="button" role="radio" aria-checked={tool === 'trace'} data-tool="trace" title="Trace a picture or bring in a DXF drawing (T)" onClick={() => store.setTool('trace')}>Trace</button>
       </div>}
       {tool === 'wall' && <span className="hint">{drawing ? 'Click to add the next wall. Esc ends the run.' : 'Click to start a wall.'}</span>}
       {(tool === 'door' || tool === 'window') && <span className="hint">Click a wall to add a {tool}. Esc to stop.</span>}
@@ -287,7 +289,7 @@ export default function Editor() {
       else if (k === 'escape') {
         const tool = editor.getState().tool;
         if (tool === 'wall') endChain();
-        else if (tool === 'door' || tool === 'window' || tool === 'plot') store.setTool('select');
+        else if (tool === 'door' || tool === 'window' || tool === 'plot' || tool === 'trace') store.setTool('select');
         else store.select(null);
       }
       else if (k === 'delete' || k === 'backspace') { if (store.removeSelected()) e.preventDefault(); }
@@ -296,6 +298,7 @@ export default function Editor() {
       else if (k === 'd') store.setTool('door');
       else if (k === 'n') store.setTool('window');
       else if (k === 'p') store.setTool('plot');
+      else if (k === 't') store.setTool('trace');
       else if (k === 'm') store.setMeasure(!editor.getState().measure);
       else if (k === 'f') {
         const sel = editor.getState().selection;
@@ -328,6 +331,10 @@ export default function Editor() {
       setTool: store.setTool,
       setMeasure: store.setMeasure,
       setFurniture: store.setFurniture,
+      underlay: () => editor.getState().underlay,
+      setUnderlay: store.setUnderlay,
+      scaleUnderlay: store.scaleUnderlay,
+      parseDxf, fromDxf, importDxf,
       furniture: () => ({ files: furniture.models, ...furniture.stats }),
       furnish: (level: string) => furnishLevel(editor.getState().doc, level),
       load: store.load,

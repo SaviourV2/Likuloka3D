@@ -29,16 +29,18 @@ export interface RoomlinesPlan {
   layout?: Split;
 }
 
+/** Room names to uses, in English and Indonesian. The first match wins, so the narrower names come first. */
 const GUESS: [RegExp, RoomType][] = [
-  [/kitchen/i, 'kitchen'], [/dining/i, 'dining'], [/bed|master|guest/i, 'bedroom'],
-  [/bath|wc|toilet|shower|ensuite/i, 'bathroom'], [/office|study/i, 'office'],
-  [/hall|entry|corridor|foyer/i, 'hallway'], [/laundry|utility/i, 'laundry'],
-  [/storage|store|closet|pantry/i, 'storage'], [/studio/i, 'studio'], [/pool|kolam/i, 'pool'],
+  [/pool|kolam/i, 'pool'], [/kitchen|dapur|pantry kering/i, 'kitchen'], [/dining|makan/i, 'dining'],
+  [/bath|wc|toilet|shower|ensuite|mandi|\bkm\b/i, 'bathroom'], [/bed|master|guest|tidur|kamar/i, 'bedroom'],
+  [/office|study|kerja/i, 'office'],
+  [/hall|entry|corridor|foyer|teras|selasar|koridor/i, 'hallway'], [/laundry|utility|cuci/i, 'laundry'],
+  [/storage|store|closet|pantry|gudang/i, 'storage'], [/studio/i, 'studio'], [/living|keluarga|tamu/i, 'living'],
 ];
 /** A floor the room was given in Roomlines, when this editor has that finish; otherwise the colour of its use. */
 const floorOf = (r: Room): FloorFinish => (FLOOR_KEYS as readonly string[]).includes(r.floor ?? '') ? r.floor as FloorFinish : 'none';
 
-function useOf(room: { name?: string; type?: string }): RoomType {
+export function useOf(room: { name?: string; type?: string }): RoomType {
   if (room.type && (ROOM_TYPES as readonly string[]).includes(room.type)) return room.type as RoomType;
   for (const [re, t] of GUESS) if (re.test(room.name ?? '')) return t;
   return 'living';

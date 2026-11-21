@@ -484,3 +484,11 @@ kbd { background: rgba(111, 208, 255, .1); color: var(--accent); box-shadow: ins
 .sides { list-style: none; margin: 0 0 14px; padding: 0; display: grid; gap: 3px; font-size: 13px; }
 .sides li { display: grid; grid-template-columns: 1fr auto auto; gap: 8px; align-items: center; padding: 2px 4px; color: var(--muted); }
 .sides b { font: 600 12px var(--font-data); color: var(--ink); }
+
+/* The bar holds six tools: below a wide screen its buttons are drawn tighter so it stays on one line. */
+@media (max-width: 1700px) and (min-width: 861px) {
+  .bar { gap: 3px; padding-left: 6px; }
+  .bar .segmented button { padding: 5px 6px; }
+  .bar > button, .menu > summary { padding-left: 7px; padding-right: 7px; }
+  .project-name { width: 9ch; }
+}

@@ -14,7 +14,7 @@ import { CUT, materials, UNIT_BOX } from '@/ecs/materials';
 import { editor, select, useEditor } from '@/scene/store';
 import type { Id, NodeType, SceneNode, Vec2 } from '@/scene/types';
 import { inset } from '@/scene/furnish';
-import { edits, placeOpening, rig, shown, startDrag, startPlotDrag } from './interact';
+import { edits, placeOpening, pressUnderlay, rig, shown, startDrag, startPlotDrag } from './interact';
 
 const EMPTY: readonly Id[] = [];
 
@@ -48,7 +48,56 @@ function clickSelect(id: Id) {
 
 export function SceneRoot() {
   const roots = useEditor(s => s.doc.roots);
-  return <>{roots.map(id => <Building key={id} id={id} />)}<Plot /></>;
+  return <>{roots.map(id => <Building key={id} id={id} />)}<Plot /><Traced /></>;
+}
+
+const TRACE_LINE = new THREE.LineBasicMaterial({ color: '#9fe0ff', transparent: true, depthWrite: false, toneMapped: false });
+const FLAT = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
+/** Just above the rooms' fills, so the drawing shows over them. */
+const TRACE_Y = 0.02;
+
+/**
+ * The drawing being traced: a picture or the lines of a CAD file, lying on the
+ * ground and see-through so the model shows with it. It takes the pointer
+ * only while the trace tool is on.
+ */
+function Traced() {
+  const u = useEditor(s => s.underlay);
+  const tracing = useEditor(s => s.tool === 'trace');
+  const marks = useEditor(s => (s.interaction.kind === 'scaling-underlay' ? s.interaction : null));
+  const url = u?.kind === 'image' ? u.url : null;
+  const texture = useMemo(() => {
+    if (!url) return null;
+    const t = new THREE.TextureLoader().load(url, () => rig.invalidate());
+    t.colorSpace = THREE.SRGBColorSpace;
+    return t;
+  }, [url]);
+  useLayoutEffect(() => () => texture?.dispose(), [texture]);
+  const segments = u?.kind === 'lines' ? u.segments : null;
+  const lines = useMemo(() => {
+    if (!segments) return null;
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(segments.flatMap(([a, b]) => [a[0], 0, a[1], b[0], 0, b[1]]), 3));
+    return g;
+  }, [segments]);
+  useLayoutEffect(() => () => lines?.dispose(), [lines]);
+  const picture = useMemo(() => (texture ? new THREE.MeshBasicMaterial({ map: texture, transparent: true, depthWrite: false, toneMapped: false }) : null), [texture]);
+  useLayoutEffect(() => () => picture?.dispose(), [picture]);
+  if (!u || !u.shown) return null;
+  if (picture) picture.opacity = u.opacity;
+  TRACE_LINE.opacity = u.opacity;
+  const h = u.kind === 'image' ? u.width / u.aspect : 0;
+  return (
+    <group userData={{ underlay: true }}>
+      {u.kind === 'image' && picture && (
+        <mesh geometry={FLAT} material={picture} position={[u.at[0] + u.width / 2, TRACE_Y, u.at[1] + h / 2]} scale={[u.width, 1, h]} renderOrder={5}
+          {...(tracing ? { onPointerDown: pressUnderlay, onPointerOver: () => cursor(marks ? 'crosshair' : 'move'), onPointerOut: () => cursor('') } : {})} />
+      )}
+      {u.kind === 'lines' && lines && <lineSegments geometry={lines} material={TRACE_LINE} position={[u.at[0], TRACE_Y, u.at[1]]} renderOrder={5} />}
+      {marks?.a && <mesh geometry={SMALL} material={materials.preview} position={[marks.a[0], TRACE_Y + 0.05, marks.a[1]]} renderOrder={11} />}
+      {marks?.b && <mesh geometry={SMALL} material={materials.preview} position={[marks.b[0], TRACE_Y + 0.05, marks.b[1]]} renderOrder={11} />}
+    </group>
+  );
 }
 
 const PLOT_LINE = new THREE.MeshBasicNodeMaterial({ color: '#ffd166', toneMapped: false });
