@@ -90,6 +90,8 @@ body { background: var(--paper); color: var(--ink); font-family: var(--font-body
 #plan .room { cursor: move; touch-action: none; transition: fill-opacity .2s; }
 #plan .handle { fill: var(--plan-bg); stroke: var(--accent); cursor: nwse-resize; touch-action: none; }
 #plan .handle.ne, #plan .handle.sw { cursor: nesw-resize; }
+#plan .handle.vertex { cursor: move; }
+#plan .mid { fill: var(--plan-bg); stroke: var(--accent); cursor: copy; opacity: .75; }
 #dyn.fresh .room { animation: pop .5s var(--spring) both; transform-box: fill-box; transform-origin: center; }
 @keyframes pop { from { transform: scale(.88); opacity: .2; } }
 .wrap[data-tool^="scaling"] #plan, .wrap[data-tool^="scaling"] #plan .room { cursor: crosshair; }
@@ -502,10 +504,16 @@ function layoutTree(node, x, y, w, h, out, depth = 0) {
     pos = end;
   });
 }
+// A list of at least three [x, y] corners that encloses some area, or null.
+function cleanPoints(P) {
+  if (!Array.isArray(P)) return null;
+  const out = P.filter(q => Array.isArray(q) && q.length >= 2 && Number.isFinite(Number(q[0])) && Number.isFinite(Number(q[1]))).slice(0, 40).map(q => [r3(Number(q[0])), r3(Number(q[1]))]);
+  return out.length >= 3 && polyArea(out) >= 0.5 ? out : null;
+}
 function normalizePlan(obj) {
   if (!obj || typeof obj !== 'object' || Array.isArray(obj)) throw new Error('The plan must be one JSON object.');
   let raw = [];
-  if (Array.isArray(obj.rooms)) raw = obj.rooms.filter(r => r && typeof r === 'object').map(r => ({ name: r.name, type: r.type, x: num(r.x), y: num(r.y), w: num(r.w), h: num(r.h !== undefined ? r.h : r.d), finish: r }));
+  if (Array.isArray(obj.rooms)) raw = obj.rooms.filter(r => r && typeof r === 'object').map(r => ({ name: r.name, type: r.type, x: num(r.x), y: num(r.y), w: num(r.w), h: num(r.h !== undefined ? r.h : r.d), finish: r, points: r.points })).map(r => { const P = cleanPoints(r.points); if (P) { const xs = P.map(q => q[0]), ys = P.map(q => q[1]); r.x = Math.min(...xs); r.y = Math.min(...ys); r.w = Math.max(...xs) - r.x; r.h = Math.max(...ys) - r.y; } return r; });
   else if (obj.layout) layoutTree(obj.layout, 0, 0, clamp(snap(num(obj.width, 10)), 3, 40), clamp(snap(num(obj.depth, 8)), 3, 40), raw);
   else throw new Error('No rooms found. Use {"rooms": [...]} or {"width", "depth", "layout"}.');
   const rooms = raw.filter(r => r.w > 0.4 && r.h > 0.4).slice(0, 24).map(r => {
@@ -513,11 +521,13 @@ function normalizePlan(obj) {
     const type = TYPES[r.type] ? r.type : guessType(name);
     // snap the edges, not the size, so rooms that shared an edge still do
     const x = snap(r.x), y = snap(r.y);
-    return setFinish({ id: 'r' + (++uid), name, type, x, y, w: clamp(snap(r.x + r.w) - x, 1, 40), h: clamp(snap(r.y + r.h) - y, 1, 40) }, r.finish ? finishFields(r.finish) : {});
+    const room = setFinish({ id: 'r' + (++uid), name, type, x, y, w: clamp(snap(r.x + r.w) - x, 1, 40), h: clamp(snap(r.y + r.h) - y, 1, 40) }, r.finish ? finishFields(r.finish) : {});
+    const P = cleanPoints(r.points); if (P) setOutline(room, P);
+    return room;
   });
   if (!rooms.length) throw new Error('The plan has no usable rooms.');
   const minX = Math.min(...rooms.map(r => r.x)), minY = Math.min(...rooms.map(r => r.y));
-  rooms.forEach(r => { r.x -= minX; r.y -= minY; });
+  rooms.forEach(r => { r.x -= minX; r.y -= minY; if (r.points) setOutline(r, r.points.map(q => [q[0] - minX, q[1] - minY])); });
   let plot = null;
   if (Array.isArray(obj.plot)) {
     plot = obj.plot.filter(q => Array.isArray(q) && q.length >= 2 && Number.isFinite(Number(q[0])) && Number.isFinite(Number(q[1]))).slice(0, 40).map(q => [Math.round((Number(q[0]) - minX) * 100) / 100, Math.round((Number(q[1]) - minY) * 100) / 100]);
@@ -525,7 +535,7 @@ function normalizePlan(obj) {
   }
   return { name: String(obj.name || 'Untitled home').trim().slice(0, 60) || 'Untitled home', rooms, plot, shift: { x: minX, y: minY } };
 }
-const exportPlan = p => { const o = { name: p.name, units: 'm', rooms: p.rooms.map(r => ({ name: r.name, type: r.type, x: r.x, y: r.y, w: r.w, h: r.h, ...finishFields(r) })) }; if (p.plot) o.plot = p.plot; return o; };
+const exportPlan = p => { const o = { name: p.name, units: 'm', rooms: p.rooms.map(r => ({ name: r.name, type: r.type, x: r.x, y: r.y, w: r.w, h: r.h, ...(r.points ? { points: r.points } : {}), ...finishFields(r) })) }; if (p.plot) o.plot = p.plot; return o; };
 const polyArea = q => Math.abs(q.reduce((s, a, i) => { const c = q[(i + 1) % q.length]; return s + a[0] * c[1] - c[0] * a[1]; }, 0)) / 2;
 function bounds(p) {
   const x0 = Math.min(...p.rooms.map(r => r.x)), y0 = Math.min(...p.rooms.map(r => r.y));
@@ -533,36 +543,93 @@ function bounds(p) {
   return { x0, y0, x1, y1, w: x1 - x0, h: y1 - y0 };
 }
 
+/* ---------- room geometry ----------
+   A room is an outline of corners, clockwise on screen. A plain rectangle keeps only x, y, w, h; any other shape also has `points`,
+   and then x, y, w, h are its bounding box. Everything below works on edges, so a wall can run at any angle. */
+const r3 = v => Math.round(v * 1000) / 1000;
+const outline = r => r.points || [[r.x, r.y], [r.x + r.w, r.y], [r.x + r.w, r.y + r.h], [r.x, r.y + r.h]];
+const roomArea = r => r.points ? polyArea(r.points) : r.w * r.h;
+const centroid = P => { let a = 0, cx = 0, cy = 0; P.forEach((p, i) => { const q = P[(i + 1) % P.length], k = p[0] * q[1] - q[0] * p[1]; a += k; cx += (p[0] + q[0]) * k; cy += (p[1] + q[1]) * k; }); return Math.abs(a) < 1e-9 ? P[0].slice() : [cx / (3 * a), cy / (3 * a)]; };
+const signedArea = P => P.reduce((t, p, i) => { const q = P[(i + 1) % P.length]; return t + p[0] * q[1] - q[0] * p[1]; }, 0) / 2;
+function inPoly(P, x, y, tol = 1e-6) { // inside or on the edge
+  let inside = false;
+  for (let i = 0, j = P.length - 1; i < P.length; j = i++) {
+    const [xi, yi] = P[i], [xj, yj] = P[j], dx = xj - xi, dy = yj - yi, len2 = dx * dx + dy * dy;
+    const k = len2 ? clamp(((x - xi) * dx + (y - yi) * dy) / len2, 0, 1) : 0;
+    if (Math.hypot(x - xi - dx * k, y - yi - dy * k) <= tol) return true;
+    if ((yi > y) !== (yj > y) && x < dx * (y - yi) / dy + xi) inside = !inside;
+  }
+  return inside;
+}
+// Gives a room `points` (or takes them away when they are just its rectangle) and keeps x, y, w, h as the bounding box.
+function setOutline(r, P) {
+  P = P.map(q => [r3(q[0]), r3(q[1])]);
+  if (signedArea(P) < 0) P.reverse();
+  const xs = P.map(q => q[0]), ys = P.map(q => q[1]);
+  r.x = Math.min(...xs); r.y = Math.min(...ys); r.w = r3(Math.max(...xs) - r.x); r.h = r3(Math.max(...ys) - r.y);
+  const box = P.length === 4 && P.every(q => (Math.abs(q[0] - r.x) < 1e-6 || Math.abs(q[0] - r.x - r.w) < 1e-6) && (Math.abs(q[1] - r.y) < 1e-6 || Math.abs(q[1] - r.y - r.h) < 1e-6)) && Math.abs(polyArea(P) - r.w * r.h) < 1e-6;
+  if (box) delete r.points; else r.points = P;
+  return r;
+}
+// The edges of a room. `u` runs along the edge and `n` points into the room; `at(a, d)` is the point a metres along and d metres in.
+// A rectangle lists its sides as north, south, west, east, the order the rest of the page has always used.
+function edgesOf(r) {
+  const P = outline(r), order = r.points ? P.map((_, i) => i) : [0, 2, 3, 1], names = r.points ? null : { 0: 'N', 2: 'S', 3: 'W', 1: 'E' };
+  return order.map(i => {
+    const A = P[i], B = P[(i + 1) % P.length], len = Math.hypot(B[0] - A[0], B[1] - A[1]) || 1e-9, u = [(B[0] - A[0]) / len, (B[1] - A[1]) / len], n = [-u[1], u[0]];
+    // the same line written one way whichever room it belongs to: direction `uc`, a point `o` on it, and positions `t` along it
+    const flip = u[0] < -1e-9 || (Math.abs(u[0]) <= 1e-9 && u[1] < 0), uc = flip ? [-u[0], -u[1]] : u, k = A[0] * uc[0] + A[1] * uc[1];
+    const o = [A[0] - uc[0] * k, A[1] - uc[1] * k], tA = k, tB = B[0] * uc[0] + B[1] * uc[1];
+    return { side: names ? names[i] : 'e' + i, i, A, B, len, u, n, uc, o, t0: Math.min(tA, tB), t1: Math.max(tA, tB), inw: flip ? -1 : 1,
+      depth: Math.max(...P.map(q => (q[0] - A[0]) * n[0] + (q[1] - A[1]) * n[1])), yaw: Math.atan2(-u[1], u[0]), at: (a, d) => [A[0] + u[0] * a + n[0] * d, A[1] + u[1] * a + n[1] * d] };
+  });
+}
+// A wall piece lies on the line o + uc * t, between t0 and t1. `nc` is the side of that line that `plus` and `inw` refer to.
+const onWall = (p, t, off = 0) => [p.o[0] + p.u[0] * t - p.u[1] * off, p.o[1] + p.u[1] * t + p.u[0] * off];
+// A four-cornered area on the floor: its corners, its bounding box, and whether it is square to the axes.
+function quadOf(pts) {
+  const xs = pts.map(q => q[0]), ys = pts.map(q => q[1]);
+  const flat = pts.every((q, i) => { const c = pts[(i + 1) % 4]; return Math.abs(q[0] - c[0]) < 1e-9 || Math.abs(q[1] - c[1]) < 1e-9; });
+  return { pts, flat, x0: Math.min(...xs), x1: Math.max(...xs), y0: Math.min(...ys), y1: Math.max(...ys) };
+}
+function hit(A, B) { // do two such areas overlap by more than a hair
+  if (!(A.x0 < B.x1 - 1e-6 && A.x1 > B.x0 + 1e-6 && A.y0 < B.y1 - 1e-6 && A.y1 > B.y0 + 1e-6)) return false;
+  if (A.flat && B.flat) return true;
+  for (const Q of [A, B]) for (let i = 0; i < 4; i++) { // any edge of either that separates them means no overlap
+    const a = Q.pts[i], b = Q.pts[(i + 1) % 4], nx = b[1] - a[1], ny = a[0] - b[0], len = Math.hypot(nx, ny) || 1;
+    const span = W => { const v = W.pts.map(q => (q[0] * nx + q[1] * ny) / len); return [Math.min(...v), Math.max(...v)]; };
+    const [a0, a1] = span(A), [b0, b1] = span(B);
+    if (a1 <= b0 + 1e-6 || b1 <= a0 + 1e-6) return false;
+  }
+  return true;
+}
+
 /* ---------- walls, doors, windows ---------- */
 function analyze(plan) {
-  const rooms = plan.rooms, pieces = [], adj = [];
-  const sidesOf = r => [
-    { side: 'N', axis: 'h', c: r.y, t0: r.x, t1: r.x + r.w, inw: 1 },
-    { side: 'S', axis: 'h', c: r.y + r.h, t0: r.x, t1: r.x + r.w, inw: -1 },
-    { side: 'W', axis: 'v', c: r.x, t0: r.y, t1: r.y + r.h, inw: 1 },
-    { side: 'E', axis: 'v', c: r.x + r.w, t0: r.y, t1: r.y + r.h, inw: -1 } ];
+  const rooms = plan.rooms, pieces = [], adj = [], sides = rooms.map(edgesOf);
   rooms.forEach((r, i) => {
-    for (const s of sidesOf(r)) {
+    for (const s of sides[i]) {
       const cuts = [];
       rooms.forEach((o, j) => {
         if (j === i) return;
-        for (const q of sidesOf(o)) {
-          if (q.axis !== s.axis || q.inw === s.inw || Math.abs(q.c - s.c) > EPS) continue;
+        for (const q of sides[j]) {
+          // the same line, seen from opposite sides
+          if (q.inw === s.inw || Math.abs(q.uc[0] * s.uc[1] - q.uc[1] * s.uc[0]) > 2e-3 || Math.hypot(q.o[0] - s.o[0], q.o[1] - s.o[1]) > EPS) continue;
           const a = Math.max(s.t0, q.t0), b = Math.min(s.t1, q.t1);
           if (b - a <= 0.05) continue;
           cuts.push([a, b]);
-          if (i < j) { const p = { axis: s.axis, c: s.c, t0: a, t1: b, ext: false, a: r, b: o, bPlus: s.inw === -1, openings: [] }; pieces.push(p); adj.push(p); }
+          if (i < j) { const p = { o: s.o, u: s.uc, t0: a, t1: b, ext: false, a: r, b: o, inw: s.inw, bPlus: s.inw === -1, openings: [] }; pieces.push(p); adj.push(p); }
         }
       });
       cuts.sort((p, q) => p[0] - q[0]);
       let cur = s.t0;
-      const ext = (a, b) => pieces.push({ axis: s.axis, c: s.c, t0: a, t1: b, ext: true, a: r, inw: s.inw, openings: [] });
+      const ext = (a, b) => pieces.push({ o: s.o, u: s.uc, t0: a, t1: b, ext: true, a: r, inw: s.inw, openings: [] });
       for (const [a, b] of cuts) { if (a - cur > 0.05) ext(cur, a); cur = Math.max(cur, b); }
       if (s.t1 - cur > 0.05) ext(cur, s.t1);
     }
   });
 
-  const byCirc = [...rooms].sort((a, b) => TYPES[a.type].circ - TYPES[b.type].circ || b.w * b.h - a.w * a.h);
+  const byCirc = [...rooms].sort((a, b) => TYPES[a.type].circ - TYPES[b.type].circ || roomArea(b) - roomArea(a));
   const entry = byCirc[0];
   // Doors: grow a tree from the entry room so every room is reachable, routing through corridor-like rooms first.
   const inTree = new Set([entry]), doorAdj = new Set();
@@ -590,7 +657,8 @@ function analyze(plan) {
       const w = small ? 0.8 : 0.9;
       const s = len >= w + 1.6 ? p.t0 + 0.4 : (p.t0 + p.t1 - w) / 2;
       const into = TYPES[p.a.type].circ >= TYPES[p.b.type].circ ? p.a : p.b;
-      p.openings.push({ kind: 'door', t0: s, t1: s + w, sill: 0, head: 2.05, plus: into === p.b ? p.bPlus : !p.bPlus });
+      // `plus`: the door swings to the side of the wall its line's normal points at
+      p.openings.push({ kind: 'door', t0: s, t1: s + w, sill: 0, head: 2.05, plus: into === p.a ? p.inw === 1 : p.inw !== 1 });
     }
   }
   const extOf = r => pieces.filter(p => p.ext && p.a === r).sort((x, y) => (y.t1 - y.t0) - (x.t1 - x.t0));
@@ -616,11 +684,11 @@ function analyze(plan) {
       p.openings.push({ kind: 'window', t0: m - w / 2, t1: m + w / 2, sill, head }); n++;
     }
   }
+  // the floor to keep clear in front of each opening, on both sides of its wall
   const zones = [], winZones = [];
   for (const p of pieces) for (const o of p.openings) {
-    const d = o.kind === 'window' ? 0.45 : o.kind === 'open' ? 0.7 : 1.0;
-    const z = p.axis === 'h' ? { x0: o.t0 - 0.08, x1: o.t1 + 0.08, y0: p.c - d, y1: p.c + d } : { x0: p.c - d, x1: p.c + d, y0: o.t0 - 0.08, y1: o.t1 + 0.08 };
-    (o.kind === 'window' ? winZones : zones).push(z);
+    const d = o.kind === 'window' ? 0.45 : o.kind === 'open' ? 0.7 : 1.0, a = o.t0 - 0.08, b = o.t1 + 0.08;
+    (o.kind === 'window' ? winZones : zones).push(quadOf([onWall(p, a, -d), onWall(p, b, -d), onWall(p, b, d), onWall(p, a, d)]));
   }
   return { pieces, zones, winZones, entry };
 }
@@ -631,35 +699,34 @@ const SOFT = [0x6f8ba3, 0xb9805f, 0x86a184, 0xa48db5];
 const lighten = (c, k) => { const r = c >> 16 & 255, g = c >> 8 & 255, b = c & 255, m = v => Math.round(v + (255 - v) * k); return m(r) << 16 | m(g) << 8 | m(b); };
 // Parsed furniture models by name: { scene, min, size, centre }. Empty until the models machine has loaded them.
 const modelLib = new Map();
-function frame(r, side) {
-  if (side === 'N') return { side: 'N', len: r.w, depth: r.h, pt: (a, d) => [r.x + a, r.y + d] };
-  if (side === 'S') return { side: 'S', len: r.w, depth: r.h, pt: (a, d) => [r.x + r.w - a, r.y + r.h - d] };
-  if (side === 'W') return { side: 'W', len: r.h, depth: r.w, pt: (a, d) => [r.x + d, r.y + r.h - a] };
-  return { side: 'E', len: r.h, depth: r.w, pt: (a, d) => [r.x + r.w - d, r.y + a] };
+// The floor area a piece covers, measured from one wall of the room: a0..a1 along the wall, d0..d1 out from it.
+const area = (fr, a0, a1, d0, d1) => quadOf([fr.at(a0, d0), fr.at(a1, d0), fr.at(a1, d1), fr.at(a0, d1)]);
+const framesOf = ctx => ctx.frames || (ctx.frames = edgesOf(ctx.r));
+function sideInfo(ctx, fr) {
+  const strip = area(fr, 0, fr.len, 0, 0.3);
+  return { side: fr.side, fr, len: fr.len, depth: fr.depth, doors: ctx.an.zones.filter(z => hit(z, strip)).length, windows: ctx.an.winZones.filter(z => hit(z, strip)).length };
 }
-function aabb(fr, a0, a1, d0, d1) { const p = fr.pt(a0, d0), q = fr.pt(a1, d1); return { x0: Math.min(p[0], q[0]), x1: Math.max(p[0], q[0]), y0: Math.min(p[1], q[1]), y1: Math.max(p[1], q[1]) }; }
-const hit = (A, B) => A.x0 < B.x1 - 1e-6 && A.x1 > B.x0 + 1e-6 && A.y0 < B.y1 - 1e-6 && A.y1 > B.y0 + 1e-6;
-function sideInfo(ctx, side) {
-  const fr = frame(ctx.r, side), strip = aabb(fr, 0, fr.len, 0, 0.3);
-  return { side, fr, len: fr.len, depth: fr.depth, doors: ctx.an.zones.filter(z => hit(z, strip)).length, windows: ctx.an.winZones.filter(z => hit(z, strip)).length };
-}
-const sides = (ctx, score, skip = []) => ['N', 'S', 'W', 'E'].filter(s => !skip.includes(s)).map(s => sideInfo(ctx, s)).map(i => ({ ...i, score: score(i) })).sort((a, b) => b.score - a.score);
+const sides = (ctx, score, skip = []) => framesOf(ctx).filter(f => !skip.includes(f.side)).map(f => sideInfo(ctx, f)).map(i => ({ ...i, score: score(i) })).sort((a, b) => b.score - a.score);
+// the wall that faces a given one most directly
+const facing = (ctx, fr) => sideInfo(ctx, framesOf(ctx).filter(f => f !== fr).reduce((best, f) => (f.n[0] * fr.n[0] + f.n[1] * fr.n[1] < best.n[0] * fr.n[0] + best.n[1] * fr.n[1] - 1e-9 ? f : best)));
 function put(ctx, fr, a, d, item) {
   if (a < 0.04 || a + item.w > fr.len - 0.04 || d < 0 || d + item.dep > fr.depth - 0.04) return false;
   if (!item.soft) {
-    const box = aabb(fr, a + 0.01, a + item.w - 0.01, d + 0.01, d + item.dep - 0.01);
+    const box = area(fr, a + 0.01, a + item.w - 0.01, d + 0.01, d + item.dep - 0.01);
+    if (ctx.r.points && !box.pts.every(q => inPoly(ctx.r.points, q[0], q[1], 0.02))) return false; // a slanted wall may cut the corner off
     if (ctx.placed.some(p => hit(p, box)) || ctx.an.zones.some(z => hit(z, box))) return false;
     if (item.tall && ctx.an.winZones.some(z => hit(z, box))) return false;
     ctx.placed.push(box);
   }
-  const boxes = item.parts.map(p => ({ ...aabb(fr, a + p[0], a + p[1], d + p[2], d + p[3]), z0: p[4], z1: p[5], color: p[6], kind: p[7] || 'box' }));
+  // every box knows its bounding box (x0..y1) and, for drawing, its centre, size and turn
+  const solid = (a0, a1, d0, d1) => { const q = area(fr, a0, a1, d0, d1), c = fr.at((a0 + a1) / 2, (d0 + d1) / 2); return { x0: q.x0, x1: q.x1, y0: q.y0, y1: q.y1, cx: c[0], cz: c[1], lw: a1 - a0, ld: d1 - d0, yaw: fr.yaw }; };
+  const boxes = item.parts.map(p => ({ ...solid(a + p[0], a + p[1], d + p[2], d + p[3]), z0: p[4], z1: p[5], color: p[6], kind: p[7] || 'box' }));
   if (!item.models) { ctx.parts.push(...boxes); return true; }
   // A piece with model files is one "set": where each model goes, plus the boxes to draw if the models are not available.
-  // Every model in the kit faces +z with its back at the lowest z, so turning it by the wall's side puts its back to the wall.
-  const yaw = { N: 0, S: Math.PI, W: Math.PI / 2, E: -Math.PI / 2 }[fr.side];
-  ctx.parts.push({ kind: 'set', ...aabb(fr, a, a + item.w, d, d + item.dep), alt: boxes, tint: ctx.soft, models: item.models.map(m => {
-    const c = fr.pt(a + (m[1] + m[2]) / 2, d + (m[3] + m[4]) / 2);
-    return { name: m[0], cx: c[0], cz: c[1], w: m[2] - m[1], d: m[4] - m[3], y0: m[5], h: m[6] - m[5], yaw: yaw + (m[7] === 'flip' ? Math.PI : 0) };
+  // Every model in the kit faces +z with its back at the lowest z, so turning it with the wall puts its back to the wall.
+  ctx.parts.push({ kind: 'set', ...solid(a, a + item.w, d, d + item.dep), alt: boxes, tint: ctx.soft, models: item.models.map(m => {
+    const c = fr.at(a + (m[1] + m[2]) / 2, d + (m[3] + m[4]) / 2);
+    return { name: m[0], cx: c[0], cz: c[1], w: m[2] - m[1], d: m[4] - m[3], y0: m[5], h: m[6] - m[5], yaw: fr.yaw + (m[7] === 'flip' ? Math.PI : 0) };
   }) });
   return true;
 }
@@ -673,7 +740,9 @@ function along(ctx, info, item, order = ['center', 'start', 'end'], d = 0) {
 function anySide(ctx, item, score, order, skip) { for (const s of sides(ctx, score, skip)) if (along(ctx, s, item, order) !== null) return s; return null; }
 function free(ctx, item) {
   const spots = [[.5, .5], [.5, .64], [.5, .36], [.64, .5], [.36, .5], [.66, .66], [.34, .34], [.66, .34], [.34, .66]];
-  for (const side of ['N', 'W']) { const fr = frame(ctx.r, side); for (const [fa, fd] of spots) if (put(ctx, fr, (fr.len - item.w) * fa, (fr.depth - item.dep) * fd, item)) return true; }
+  // tried along one wall and then along the wall most square to it, so the piece can sit either way round
+  const all = framesOf(ctx), first = all[0], second = all.find(f => f.side === 'W') || all.slice(1).reduce((b, f) => (Math.abs(f.u[0] * first.u[0] + f.u[1] * first.u[1]) < Math.abs(b.u[0] * first.u[0] + b.u[1] * first.u[1]) ? f : b));
+  for (const fr of [first, second]) for (const [fa, fd] of spots) if (put(ctx, fr, (fr.len - item.w) * fa, (fr.depth - item.dep) * fd, item)) return true;
   return false;
 }
 const solid = i => -i.doors * 10 - i.windows * 3 + i.len * 0.1;
@@ -749,7 +818,7 @@ const RECIPES = {
       const rw = Math.min(2.8, done.len - 0.3), rd = Math.min(2.0, done.depth - 0.9);
       if (rd > 1) put(ctx, done.fr, clamp(c - rw / 2, 0.1, done.len - rw - 0.1), 0.7, { w: rw, dep: rd, soft: true, parts: [[0, rw, 0, rd, 0.004, 0.018, C.rug], [0.12, rw - 0.12, 0.12, rd - 0.12, 0.018, 0.022, lighten(ctx.soft, 0.55)]], models: [['rugRectangle', 0, rw, 0, rd, 0.004, 0.026]] });
       if (done.depth >= 3.1) {
-        const opp = sideInfo(ctx, { N: 'S', S: 'N', W: 'E', E: 'W' }[done.side]);
+        const opp = facing(ctx, done.fr);
         const tv = { w: 1.6, dep: 0.42, parts: [[0, 1.6, 0, 0.42, 0.06, 0.48, C.wood], [0.2, 1.4, 0.16, 0.2, 0.56, 1.26, C.black]], models: [['cabinetTelevision', 0, 1.6, 0, 0.42, 0, 0.5], ['televisionModern', 0.25, 1.35, 0.12, 0.32, 0.5, 1.22]] };
         if (!put(ctx, opp.fr, clamp(opp.len - c - 0.8, 0.06, opp.len - 1.66), 0, tv)) along(ctx, opp, tv);
       }
@@ -813,7 +882,7 @@ function furnish(plan, an) {
 }
 
 /* ---------- state ---------- */
-const state = { plan: null, sel: null, an: null, mode: 'both', furniture: true, cut: true, zoomHome: false, panel: 'open' };
+const state = { plan: null, sel: null, an: null, mode: 'both', furniture: true, cut: true, zoomHome: false, panel: 'open', editPlot: false };
 const phone = window.matchMedia('(max-width: 860px)'), narrow = window.matchMedia('(max-width: 1179px)'), calm = window.matchMedia('(prefers-reduced-motion: reduce)');
 let booted = false; // nothing animates while the first frame is being put together
 const store = { get() { try { return JSON.parse(localStorage.getItem('roomlines.plan') || 'null'); } catch (e) { return null; } }, set(v) { try { localStorage.setItem('roomlines.plan', JSON.stringify(v)); } catch (e) {} } };
@@ -850,7 +919,7 @@ let pending3d = false;
 function changed(light) {
   state.an = analyze(state.plan);
   render2D(); renderList(); syncEditor();
-  const area = state.plan.rooms.reduce((s, r) => s + r.w * r.h, 0), b = bounds(state.plan);
+  const area = state.plan.rooms.reduce((s, r) => s + roomArea(r), 0), b = bounds(state.plan);
   $('#stats').textContent = `${state.plan.rooms.length} rooms · ${area.toFixed(1)} m² · ${b.w.toFixed(2)} × ${b.h.toFixed(2)} m`;
   if (document.activeElement !== $('#jsonBox')) $('#jsonBox').value = JSON.stringify(exportPlan(state.plan), null, 1);
   if (!light) { store.set(exportPlan(state.plan)); notify(); }
@@ -869,9 +938,45 @@ function updateRoom(id, patch = {}) {
   const r = roomById(id); if (!r) return false;
   if ('name' in patch) r.name = String(patch.name).slice(0, 40) || 'Room';
   if (TYPES[patch.type]) r.type = patch.type;
+  if ('points' in patch) { const P = cleanPoints(patch.points); if (P) setOutline(r, P); else if (patch.points === null && r.points) delete r.points; }
+  const was = { x: r.x, y: r.y, w: r.w, h: r.h };
   for (const k of ['x', 'y']) if (k in patch) r[k] = snap(num(patch[k], r[k]));
   for (const k of ['w', 'h']) if (k in patch) r[k] = clamp(snap(num(patch[k], r[k])), 1, 40);
+  // a shaped room is moved and stretched as a whole, so its corners keep their places relative to its box
+  if (r.points && (was.x !== r.x || was.y !== r.y || was.w !== r.w || was.h !== r.h)) setOutline(r, r.points.map(q => [r.x + (q[0] - was.x) * r.w / was.w, r.y + (q[1] - was.y) * r.h / was.h]));
+  if ('rotate' in patch && num(patch.rotate)) turnRoom(r, num(patch.rotate));
   setFinish(r, patch);
+  changed(); return true;
+}
+// Turns a room about its middle. After a turn that is not a quarter turn it is no longer a plain rectangle.
+function turnRoom(r, degrees) {
+  const P = outline(r), c = centroid(P), a = degrees * Math.PI / 180, cs = Math.cos(a), sn = Math.sin(a);
+  setOutline(r, P.map(q => [c[0] + (q[0] - c[0]) * cs - (q[1] - c[1]) * sn, c[1] + (q[0] - c[0]) * sn + (q[1] - c[1]) * cs]));
+}
+// Where a dragged corner should land: on a nearby corner of something else, else on a nearby wall, else on the grid.
+function snapCorner(x, y, skipRoom, skipIndex) {
+  const others = [];
+  state.plan.rooms.forEach(r => { const P = outline(r); P.forEach((q, i) => { if (!(r === skipRoom && i === skipIndex)) others.push({ q, c: P[(i + 1) % P.length], own: r === skipRoom }); }); });
+  if (state.plan.plot && skipRoom !== undefined) state.plan.plot.forEach((q, i, P) => { if (!(skipRoom === null && i === skipIndex)) others.push({ q, c: P[(i + 1) % P.length], own: skipRoom === null }); });
+  let best = null;
+  for (const o of others) { if (o.own) continue; const d = Math.hypot(o.q[0] - x, o.q[1] - y); if (d < 0.3 && (!best || d < best.d)) best = { d, at: o.q }; }
+  if (best) return best.at.slice();
+  for (const o of others) {
+    if (o.own) continue;
+    const dx = o.c[0] - o.q[0], dy = o.c[1] - o.q[1], l2 = dx * dx + dy * dy; if (!l2) continue;
+    const k = ((x - o.q[0]) * dx + (y - o.q[1]) * dy) / l2; if (k <= 0 || k >= 1) continue;
+    const at = [o.q[0] + dx * k, o.q[1] + dy * k], d = Math.hypot(at[0] - x, at[1] - y);
+    if (d < 0.2 && (!best || d < best.d)) best = { d, at };
+  }
+  return best ? best.at.map(r3) : [snap(x), snap(y)];
+}
+// Adds a corner at the middle of side `index` of a room, or of the plot when `id` is null.
+function addCorner(id, index) {
+  const r = id ? roomById(id) : null, P = (r ? outline(r) : state.plan.plot || []).map(q => q.slice());
+  if (P.length < 3 || P.length >= 40 || !(index >= 0 && index < P.length)) return false;
+  const a = P[index], b = P[(index + 1) % P.length];
+  P.splice(index + 1, 0, [r3((a[0] + b[0]) / 2), r3((a[1] + b[1]) / 2)]);
+  if (r) r.points = P; else state.plan.plot = P; // the new corner sits on the old side until it is dragged
   changed(); return true;
 }
 function removeRoom(id) {
@@ -905,37 +1010,34 @@ function render2D() {
     h += `<polygon points="${p.plot.map(q => q.join(',')).join(' ')}" fill="#7fae6a" fill-opacity="0.14" stroke="var(--muted)" stroke-width="0.05" stroke-dasharray="0.3 0.18" pointer-events="none"/>`;
     h += `<text class="data" x="${cx}" y="${top + pfs * 1.3}" font-size="${pfs}" text-anchor="middle">Plot · ${polyArea(p.plot).toFixed(0)} m²</text>`;
   }
-  for (const r of p.rooms) h += `<rect class="room" data-room="${r.id}" x="${r.x}" y="${r.y}" width="${r.w}" height="${r.h}" fill="${TYPES[r.type].fill}" fill-opacity="${(r.id === state.sel ? 0.62 : 0.4) * dim}"/>`;
-  // walls with gaps at openings
+  const P2 = q => q.map(v => v.join(',')).join(' ');
+  for (const r of p.rooms) h += `<polygon class="room" data-room="${r.id}" points="${P2(outline(r))}" fill="${TYPES[r.type].fill}" fill-opacity="${(r.id === state.sel ? 0.62 : 0.4) * dim}"/>`;
+  // walls with gaps at openings; a wall runs along its line from t0 to t1, at any angle
   for (const w of an.pieces) {
     const th = w.ext ? 0.2 : 0.1, ops = [...w.openings].sort((a, c) => a.t0 - c.t0);
-    const seg = (a, c) => { if (c - a < 0.005) return ''; return w.axis === 'h' ? `<line x1="${a}" y1="${w.c}" x2="${c}" y2="${w.c}" stroke="var(--wall)" stroke-width="${th}"/>` : `<line x1="${w.c}" y1="${a}" x2="${w.c}" y2="${c}" stroke="var(--wall)" stroke-width="${th}"/>`; };
+    const seg = (a, c) => { if (c - a < 0.005) return ''; const A = onWall(w, a), B = onWall(w, c); return `<line x1="${r3(A[0])}" y1="${r3(A[1])}" x2="${r3(B[0])}" y2="${r3(B[1])}" stroke="var(--wall)" stroke-width="${th}"/>`; };
     let cur = w.t0 - th / 2;
     for (const o of ops) {
       h += seg(cur, o.t0); cur = o.t1;
-      const ww = o.t1 - o.t0;
+      const ww = o.t1 - o.t0, A = onWall(w, o.t0), B = onWall(w, o.t1);
       if (o.kind === 'window') {
-        h += w.axis === 'h'
-          ? `<rect x="${o.t0}" y="${w.c - th / 2}" width="${ww}" height="${th}" fill="var(--plan-bg)" stroke="var(--wall)" stroke-width="0.03"/><line x1="${o.t0}" y1="${w.c}" x2="${o.t1}" y2="${w.c}" stroke="var(--wall)" stroke-width="0.03"/>`
-          : `<rect x="${w.c - th / 2}" y="${o.t0}" width="${th}" height="${ww}" fill="var(--plan-bg)" stroke="var(--wall)" stroke-width="0.03"/><line x1="${w.c}" y1="${o.t0}" x2="${w.c}" y2="${o.t1}" stroke="var(--wall)" stroke-width="0.03"/>`;
+        const c = [0, 1, 2, 3].map(i => onWall(w, i === 0 || i === 3 ? o.t0 : o.t1, i < 2 ? -th / 2 : th / 2));
+        h += `<polygon points="${P2(c.map(q => q.map(r3)))}" fill="var(--plan-bg)" stroke="var(--wall)" stroke-width="0.03"/><line x1="${r3(A[0])}" y1="${r3(A[1])}" x2="${r3(B[0])}" y2="${r3(B[1])}" stroke="var(--wall)" stroke-width="0.03"/>`;
       } else if (o.kind !== 'open') {
-        const s = o.plus ? 1 : -1;
-        const d = w.axis === 'h'
-          ? `M${o.t0} ${w.c}L${o.t0} ${w.c + s * ww}A${ww} ${ww} 0 0 ${s > 0 ? 0 : 1} ${o.t1} ${w.c}`
-          : `M${w.c} ${o.t0}L${w.c + s * ww} ${o.t0}A${ww} ${ww} 0 0 ${s > 0 ? 1 : 0} ${w.c} ${o.t1}`;
-        h += `<path d="${d}" fill="none" stroke="var(--wall)" stroke-width="${o.kind === 'entry' ? 0.05 : 0.03}"/>`;
+        const sgn = o.plus ? 1 : -1, E = onWall(w, o.t0, sgn * ww); // the leaf stands open, square to the wall
+        h += `<path d="M${r3(A[0])} ${r3(A[1])}L${r3(E[0])} ${r3(E[1])}A${ww} ${ww} 0 0 ${sgn > 0 ? 0 : 1} ${r3(B[0])} ${r3(B[1])}" fill="none" stroke="var(--wall)" stroke-width="${o.kind === 'entry' ? 0.05 : 0.03}"/>`;
       }
     }
     h += seg(cur, w.t1 + th / 2);
   }
   for (const r of p.rooms) {
-    const cx = r.x + r.w / 2, cy = r.y + r.h / 2, tiny = r.w < 1.9 || r.h < 1.3, turn = r.w < 1.9 && r.h > r.w * 1.4;
+    const c = r.points ? centroid(r.points) : [r.x + r.w / 2, r.y + r.h / 2], cx = c[0], cy = c[1], tiny = r.w < 1.9 || r.h < 1.3, turn = !r.points && r.w < 1.9 && r.h > r.w * 1.4;
     const max = Math.max(3, Math.floor(((turn ? r.h : r.w) - 0.2) / (fs * 0.56)));
     const name = r.name.length > max ? r.name.slice(0, max - 1) + '…' : r.name;
     h += turn
       ? `<text transform="translate(${cx + fs * 0.35} ${cy}) rotate(-90)" font-size="${fs}" font-weight="600" text-anchor="middle">${esc(name)}</text>`
       : `<text x="${cx}" y="${cy - (tiny ? -fs * 0.3 : fs * 0.35)}" font-size="${fs}" font-weight="600" text-anchor="middle">${esc(name)}</text>`;
-    if (!tiny) h += `<text class="data" x="${cx}" y="${cy + fs * 0.75}" font-size="${fs * 0.72}" text-anchor="middle">${r.w.toFixed(2)} × ${r.h.toFixed(2)}</text><text class="data" x="${cx}" y="${cy + fs * 1.65}" font-size="${fs * 0.72}" text-anchor="middle">${(r.w * r.h).toFixed(1)} m²</text>`;
+    if (!tiny) h += (r.points ? '' : `<text class="data" x="${cx}" y="${cy + fs * 0.75}" font-size="${fs * 0.72}" text-anchor="middle">${r.w.toFixed(2)} × ${r.h.toFixed(2)}</text>`) + `<text class="data" x="${cx}" y="${cy + fs * (r.points ? 0.75 : 1.65)}" font-size="${fs * 0.72}" text-anchor="middle">${roomArea(r).toFixed(1)} m²</text>`;
   }
   // overall dimensions and scale bar
   const dy = b.y0 - 0.8, dx = b.x0 - 0.8, t = 0.12, dfs = fs * 0.78;
@@ -946,11 +1048,15 @@ function render2D() {
   h += `<rect x="${b.x0}" y="${sy}" width="1" height="0.12" fill="var(--wall)"/><rect x="${b.x0 + 1}" y="${sy}" width="1" height="0.12" fill="none" stroke="var(--wall)" stroke-width="0.025"/>`;
   h += `<text class="data" x="${b.x0}" y="${sy + 0.12 + dfs}" font-size="${dfs}">0</text><text class="data" x="${b.x0 + 1}" y="${sy + 0.12 + dfs}" font-size="${dfs}" text-anchor="middle">1</text><text class="data" x="${b.x0 + 2}" y="${sy + 0.12 + dfs}" font-size="${dfs}" text-anchor="middle">2 m</text>`;
   const s = selected();
+  const hr = clamp(Math.max(box.w, box.h) / 70, 0.11, 0.22);
+  // corners you can drag, and a small mark at the middle of each side that adds a corner there
+  const corners = (P, kind) => P.map((q, i) => { const c = P[(i + 1) % P.length]; return `<rect class="mid" data-${kind}-edge="${i}" x="${(q[0] + c[0]) / 2 - hr * 0.55}" y="${(q[1] + c[1]) / 2 - hr * 0.55}" width="${hr * 1.1}" height="${hr * 1.1}" stroke-width="0.04"><title>Add a corner here</title></rect>`; }).join('')
+    + P.map((q, i) => `<circle class="handle vertex" data-${kind}-vertex="${i}" cx="${q[0]}" cy="${q[1]}" r="${hr}" stroke-width="0.05"/>`).join('');
   if (s) {
-    const hr = clamp(Math.max(box.w, box.h) / 70, 0.11, 0.22);
-    h += `<rect x="${s.x}" y="${s.y}" width="${s.w}" height="${s.h}" fill="none" stroke="var(--accent)" stroke-width="0.06" pointer-events="none"/>`;
-    for (const [k, hx, hy] of [['nw', s.x, s.y], ['ne', s.x + s.w, s.y], ['sw', s.x, s.y + s.h], ['se', s.x + s.w, s.y + s.h]]) h += `<circle class="handle ${k}" data-handle="${k}" cx="${hx}" cy="${hy}" r="${hr}" stroke-width="0.05"/>`;
-  }
+    h += `<polygon points="${P2(outline(s))}" fill="none" stroke="var(--accent)" stroke-width="0.06" pointer-events="none"/>`;
+    if (s.points) h += corners(s.points, 'room');
+    else for (const [k, hx, hy] of [['nw', s.x, s.y], ['ne', s.x + s.w, s.y], ['sw', s.x, s.y + s.h], ['se', s.x + s.w, s.y + s.h]]) h += `<circle class="handle ${k}" data-handle="${k}" cx="${hx}" cy="${hy}" r="${hr}" stroke-width="0.05"/>`;
+  } else if (p.plot && state.editPlot) h += corners(p.plot, 'plot');
   const pts = scalePoints();
   if (pts.length) {
     const cr = clamp(Math.max(box.w, box.h) / 90, 0.08, 0.3);
@@ -964,7 +1070,11 @@ const toPlan = e => { const m = svg.getScreenCTM(); if (!m) return { x: 0, y: 0 
 let activePointer = null;
 svg.addEventListener('pointerdown', e => {
   if (tool.getSnapshot().matches('scaling')) { e.preventDefault(); tool.send({ type: 'PLAN.PRESS', at: toPlan(e) }); return; }
-  const hEl = e.target.closest('[data-handle]'), rEl = e.target.closest('[data-room]');
+  const d = e.target.dataset || {}, hEl = e.target.closest('[data-handle]'), rEl = e.target.closest('[data-room]');
+  // the middle mark of a side adds a corner there; the corner can then be dragged
+  if (d.roomEdge !== undefined || d.plotEdge !== undefined) { e.preventDefault(); addCorner(d.roomEdge !== undefined ? state.sel : null, +(d.roomEdge !== undefined ? d.roomEdge : d.plotEdge)); return; }
+  if (d.plotVertex !== undefined) { e.preventDefault(); activePointer = e.pointerId; tool.send({ type: 'VERTEX.PRESS', roomId: null, index: +d.plotVertex, at: toPlan(e) }); try { svg.setPointerCapture(e.pointerId); } catch (err) {} return; }
+  if (d.roomVertex !== undefined && state.sel) { e.preventDefault(); activePointer = e.pointerId; tool.send({ type: 'VERTEX.PRESS', roomId: state.sel, index: +d.roomVertex, at: toPlan(e) }); try { svg.setPointerCapture(e.pointerId); } catch (err) {} return; }
   if (!hEl && !rEl) { if (state.sel) select(null); return; }
   if (rEl && rEl.dataset.room !== state.sel) select(rEl.dataset.room);
   const r = selected(); if (!r) return;
@@ -981,7 +1091,7 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape' && !tool.getS
 
 /* ---------- side panel ---------- */
 function renderList() {
-  $('#roomList').innerHTML = state.plan.rooms.map(r => `<li><button type="button" data-id="${r.id}" aria-current="${r.id === state.sel}"><span class="sw" style="background:${TYPES[r.type].fill}"></span><span class="nm">${esc(r.name)}</span><span class="dim">${r.w.toFixed(2)} × ${r.h.toFixed(2)}</span></button></li>`).join('');
+  $('#roomList').innerHTML = state.plan.rooms.map(r => `<li><button type="button" data-id="${r.id}" aria-current="${r.id === state.sel}"><span class="sw" style="background:${TYPES[r.type].fill}"></span><span class="nm">${esc(r.name)}</span><span class="dim">${r.points ? roomArea(r).toFixed(1) + ' m²' : r.w.toFixed(2) + ' × ' + r.h.toFixed(2)}</span></button></li>`).join('');
 }
 $('#roomList').addEventListener('click', e => { const b = e.target.closest('button[data-id]'); if (b) select(b.dataset.id === state.sel ? null : b.dataset.id); });
 $('#edType').innerHTML = Object.entries(TYPES).map(([k, t]) => `<option value="${k}">${t.label}</option>`).join('');
@@ -1152,7 +1262,7 @@ const view = (() => {
     if (!finishMats[id]) {
       const c = document.createElement('canvas'); c.width = c.height = 256; FINISHES[id].draw(c.getContext('2d'));
       const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = 4;
-      finishMats[id] = new THREE.MeshLambertMaterial({ map: t });
+      finishMats[id] = new THREE.MeshLambertMaterial({ map: t }); finishMats[id].userData.span = FINISHES[id].span;
     }
     return finishMats[id];
   }
@@ -1215,26 +1325,35 @@ const view = (() => {
       const me = new THREE.Mesh(unit, m); me.scale.set(x1 - x0, y1 - y0, z1 - z0); me.position.set((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2);
       me.castShadow = cast; me.receiveShadow = true; group.add(me); return me;
     };
-    box(b.x0 - 0.22, b.x1 + 0.22, -0.07, -0.004, b.y0 - 0.22, b.y1 + 0.22, mat(0x9aa3ab));
+    // a box of any size, turned about the vertical: `lx` runs along the turn, `lz` across it
+    const obox = (cx, cz, lx, lz, y0, y1, yaw, m, cast = true) => {
+      const me = new THREE.Mesh(unit, m); me.scale.set(lx, y1 - y0, lz); me.position.set(cx, (y0 + y1) / 2, cz); me.rotation.y = yaw;
+      me.castShadow = cast; me.receiveShadow = true; group.add(me); return me;
+    };
+    const flatShape = (P, y, m) => { // an outline laid flat at height y, with its pattern measured in metres
+      const g = new THREE.ShapeGeometry(new THREE.Shape(P.map(q => new THREE.Vector2(q[0], -q[1])))).rotateX(-Math.PI / 2), pos = g.attributes.position, uv = g.attributes.uv, sp = (m.userData && m.userData.span) || 1;
+      for (let i = 0; i < pos.count; i++) uv.setXY(i, pos.getX(i) / sp, pos.getZ(i) / sp);
+      const me = new THREE.Mesh(g, m); me.position.y = y; me.receiveShadow = true; me.userData.own = true; group.add(me); return me;
+    };
+    if (state.plan.rooms.some(r => r.points)) for (const r of state.plan.rooms) flatShape(outline(r), -0.03, mat(0x9aa3ab)); // the slab follows a shaped home
+    else box(b.x0 - 0.22, b.x1 + 0.22, -0.07, -0.004, b.y0 - 0.22, b.y1 + 0.22, mat(0x9aa3ab));
     if (state.plan.plot) {
       const g = new THREE.ShapeGeometry(new THREE.Shape(state.plan.plot.map(q => new THREE.Vector2(q[0], -q[1])))).rotateX(-Math.PI / 2);
       const land = new THREE.Mesh(g, mat(0x8fae78)); land.position.y = -0.045; land.receiveShadow = true; land.userData.own = true; group.add(land);
     }
     for (const r of state.plan.rooms) {
-      const fid = finishOf(r).floor, fm = finishMat(fid), s = FINISHES[fid].span;
-      const g = new THREE.PlaneGeometry(r.w, r.h).rotateX(-Math.PI / 2).translate(r.x + r.w / 2, 0, r.y + r.h / 2), pos = g.attributes.position, uv = g.attributes.uv;
-      for (let i = 0; i < pos.count; i++) uv.setXY(i, pos.getX(i) / s, pos.getZ(i) / s);
-      const me = new THREE.Mesh(g, fm); me.receiveShadow = true; me.userData = { own: true, room: r.id }; group.add(me); floors.push(me);
+      const me = flatShape(outline(r), 0, finishMat(finishOf(r).floor)); me.userData.room = r.id; floors.push(me);
     }
     for (const p of state.an.pieces) {
       const half = (p.ext ? 0.2 : 0.1) / 2;
-      const slab = (t0, t1, y0, y1, m, hw = half) => p.axis === 'h' ? box(t0, t1, y0, y1, p.c - hw, p.c + hw, m) : box(p.c - hw, p.c + hw, y0, y1, t0, t1, m);
+      const yaw = Math.atan2(-p.u[1], p.u[0]);
+      const slab = (t0, t1, y0, y1, m, hw = half) => { const c = onWall(p, (t0 + t1) / 2); return obox(c[0], c[1], t1 - t0, hw * 2, y0, y1, yaw, m); };
       // Each side of a wall belongs to the room it faces. A side gets a thin skin when that room is painted or tiled.
-      const sides = (p.ext ? [[p.inw, p.a]] : [[p.bPlus ? 1 : -1, p.b], [p.bPlus ? -1 : 1, p.a]]).map(([sign, room]) => ({ sign, f: finishOf(room) })).filter(q => q.f.tile || q.f.paint !== PAINT);
+      const sides = (p.ext ? [[p.inw, p.a]] : [[-p.inw, p.b], [p.inw, p.a]]).map(([sign, room]) => ({ sign, f: finishOf(room) })).filter(q => q.f.tile || q.f.paint !== PAINT);
       const skin = (sign, t0, t1, y0, y1, m, span) => {
         if (y1 - y0 < 0.002 || t1 - t0 < 0.002) return;
-        const o = p.c + sign * (half + 0.004), P = p.axis === 'h' ? [[t0, y0, o], [t1, y0, o], [t1, y1, o], [t0, y1, o]] : [[o, y0, t0], [o, y0, t1], [o, y1, t1], [o, y1, t0]];
-        const flip = (p.axis === 'h') !== (sign > 0); // keep the front of the skin facing into its room
+        const A = onWall(p, t0, sign * (half + 0.004)), B = onWall(p, t1, sign * (half + 0.004)), P = [[A[0], y0, A[1]], [B[0], y0, B[1]], [B[0], y1, B[1]], [A[0], y1, A[1]]];
+        const flip = sign < 0; // keep the front of the skin facing into its room
         const g = new THREE.BufferGeometry();
         g.setAttribute('position', new THREE.Float32BufferAttribute(P.flat(), 3));
         g.setAttribute('uv', new THREE.Float32BufferAttribute([t0, y0, t1, y0, t1, y1, t0, y1].map(v => v / span), 2));
@@ -1264,8 +1383,7 @@ const view = (() => {
           const w = o.t1 - o.t0, lh = Math.min(o.head - 0.03, H), th = 1.2;
           const g = new THREE.BoxGeometry(w - 0.02, lh, 0.045).translate(w / 2, lh / 2, 0);
           const leaf = new THREE.Mesh(g, mat(o.kind === 'entry' ? 0x4c5b68 : 0xcfc6b6)); leaf.userData.own = true; leaf.castShadow = true;
-          if (p.axis === 'h') { leaf.position.set(o.t0, 0, p.c); leaf.rotation.y = o.plus ? -th : th; }
-          else { leaf.position.set(p.c, 0, o.t0); leaf.rotation.y = -Math.PI / 2 + (o.plus ? th : -th); }
+          const hinge = onWall(p, o.t0); leaf.position.set(hinge[0], 0, hinge[1]); leaf.rotation.y = yaw + (o.plus ? -th : th);
           group.add(leaf);
         }
       }
@@ -1274,11 +1392,11 @@ const view = (() => {
     const drawPart = f => {
       if (f.z0 >= H - 0.2 && state.cut) return;
       stats.boxes++;
-      if (f.kind === 'box') box(f.x0, f.x1, f.z0, f.z1, f.y0, f.y1, mat(f.color));
-      else if (f.kind === 'glass') { const top = Math.min(f.z1, H + 0.5); if (top > f.z0) box(f.x0, f.x1, f.z0, top, f.y0, f.y1, glass, false); }
+      if (f.kind === 'box') obox(f.cx, f.cz, f.lw, f.ld, f.z0, f.z1, f.yaw, mat(f.color));
+      else if (f.kind === 'glass') { const top = Math.min(f.z1, H + 0.5); if (top > f.z0) obox(f.cx, f.cz, f.lw, f.ld, f.z0, top, f.yaw, glass, false); }
       else {
-        const d = Math.min(f.x1 - f.x0, f.y1 - f.y0), me = new THREE.Mesh(f.kind === 'cyl' ? cyl : ball, f.kind === 'ball' ? leafMat : mat(f.color));
-        me.scale.set(d, f.z1 - f.z0, d); me.position.set((f.x0 + f.x1) / 2, (f.z0 + f.z1) / 2, (f.y0 + f.y1) / 2); me.castShadow = true; me.receiveShadow = true; group.add(me);
+        const d = Math.min(f.lw, f.ld), me = new THREE.Mesh(f.kind === 'cyl' ? cyl : ball, f.kind === 'ball' ? leafMat : mat(f.color));
+        me.scale.set(d, f.z1 - f.z0, d); me.position.set(f.cx, (f.z0 + f.z1) / 2, f.cz); me.castShadow = true; me.receiveShadow = true; group.add(me);
       }
     };
     // A model is stretched to the box the layout gave it, so it always fits the room the way the boxes did.
@@ -1296,8 +1414,10 @@ const view = (() => {
       else f.alt.forEach(drawPart);
     }
     const s = selected();
-    if (s) { const t = 0.05, y0 = 0.012, y1 = 0.03;
-      for (const [x0, x1, z0, z1] of [[s.x, s.x + s.w, s.y, s.y + t], [s.x, s.x + s.w, s.y + s.h - t, s.y + s.h], [s.x, s.x + t, s.y, s.y + s.h], [s.x + s.w - t, s.x + s.w, s.y, s.y + s.h]]) { const m = box(x0, x1, y0, y1, z0, z1, selMat, false); m.receiveShadow = false; } }
+    if (s) { // the selected room is edged on the floor, side by side
+      const P = outline(s);
+      P.forEach((q, i) => { const c = P[(i + 1) % P.length], len = Math.hypot(c[0] - q[0], c[1] - q[1]); const m = obox((q[0] + c[0]) / 2, (q[1] + c[1]) / 2, len, 0.05, 0.012, 0.03, Math.atan2(-(c[1] - q[1]), c[0] - q[0]), selMat, false); m.receiveShadow = false; });
+    }
     scene.add(group);
     const cx = (b.x0 + b.x1) / 2, cz = (b.y0 + b.y1) / 2, ext = Math.hypot(b.w, b.h) / 2 + 3;
     ground.position.x = cx; ground.position.z = cz;
@@ -1562,16 +1682,31 @@ const { setup, createActor, assign, fromPromise } = XState;
 const toolMachine = setup({
   guards: {
     roomExists: ({ event }) => !!roomById(event.roomId),
+    cornerExists: ({ event }) => { const r = event.roomId ? roomById(event.roomId) : null, P = r ? r.points : state.plan.plot; return !!P && event.index >= 0 && event.index < P.length; },
     hasDrawing: () => !!under.url,
     canApply: ({ context, event }) => context.pts.length === 2 && num(event.metres) > 0 && Math.hypot(context.pts[1].x - context.pts[0].x, context.pts[1].y - context.pts[0].y) > 1e-6,
   },
   actions: {
-    grab: assign(({ event }) => { const r = roomById(event.roomId); return { roomId: r.id, handle: event.handle || null, start: event.at, origin: { x: r.x, y: r.y, w: r.w, h: r.h } }; }),
+    grab: assign(({ event }) => { const r = roomById(event.roomId); return { roomId: r.id, handle: event.handle || null, start: event.at, origin: { x: r.x, y: r.y, w: r.w, h: r.h, points: r.points ? r.points.map(q => q.slice()) : null } }; }),
+    grabCorner: assign(({ event }) => { const r = event.roomId ? roomById(event.roomId) : null, P = r ? r.points : state.plan.plot; return { roomId: r ? r.id : null, index: event.index, start: event.at, origin: r ? { x: r.x, y: r.y, w: r.w, h: r.h, points: P.map(q => q.slice()) } : { plot: P.map(q => q.slice()) } }; }),
+    dragCorner: ({ context, event }) => {
+      const r = context.roomId ? roomById(context.roomId) : null, at = snapCorner(event.at.x, event.at.y, r, context.index);
+      const P = (r ? context.origin.points : context.origin.plot).map(q => q.slice()); P[context.index] = at;
+      if (polyArea(P) < 0.5) return;
+      if (r) { r.points = P; const xs = P.map(q => q[0]), ys = P.map(q => q[1]); r.x = Math.min(...xs); r.y = Math.min(...ys); r.w = r3(Math.max(...xs) - r.x); r.h = r3(Math.max(...ys) - r.y); } else state.plan.plot = P;
+      changed(true);
+    },
+    settleCorner: ({ context }) => { const r = context.roomId ? roomById(context.roomId) : null; if (r && r.points) { const P = r.points; delete r.points; setOutline(r, P); if (!r.points) r.points = outline(r); } },
     freezeView: () => { const vb = svg.viewBox.baseVal; frozenBox = { x: vb.x, y: vb.y, w: vb.width, h: vb.height }; },
     dragTo: ({ context, event }) => {
       const r = roomById(context.roomId); if (!r) return;
       const dx = snap(event.at.x - context.start.x), dy = snap(event.at.y - context.start.y), o = context.origin, hd = context.handle;
       let { x, y, w, h } = o;
+      if (!hd && o.points) { // a shaped room moves as a whole
+        const P = o.points.map(q => [r3(q[0] + dx), r3(q[1] + dy)]);
+        if (P[0][0] === r.points[0][0] && P[0][1] === r.points[0][1]) return;
+        r.points = P; r.x = o.x + dx; r.y = o.y + dy; changed(true); return;
+      }
       if (!hd) { x = o.x + dx; y = o.y + dy; }
       else {
         if (hd.includes('e')) w = Math.max(1, o.w + dx);
@@ -1582,7 +1717,11 @@ const toolMachine = setup({
       if (x === r.x && y === r.y && w === r.w && h === r.h) return;
       Object.assign(r, { x, y, w, h }); changed(true);
     },
-    revert: ({ context }) => { const r = roomById(context.roomId); if (r) Object.assign(r, context.origin); },
+    revert: ({ context }) => {
+      const r = context.roomId ? roomById(context.roomId) : null, o = context.origin;
+      if (r) { Object.assign(r, { x: o.x, y: o.y, w: o.w, h: o.h }); if (o.points) r.points = o.points; else delete r.points; }
+      else if (o && o.plot) state.plan.plot = o.plot;
+    },
     release: () => { frozenBox = null; changed(); },
     clearPts: assign({ pts: [] }),
     addPt: assign({ pts: ({ context, event }) => [...context.pts, event.at] }),
@@ -1600,13 +1739,15 @@ const toolMachine = setup({
   },
 }).createMachine({
   id: 'tool', initial: 'idle',
-  context: { roomId: null, handle: null, start: null, origin: null, pts: [] },
+  context: { roomId: null, handle: null, index: -1, start: null, origin: null, pts: [] },
   states: {
     idle: { on: {
       'ROOM.PRESS': { target: 'moving', guard: 'roomExists', actions: ['freezeView', 'grab'] },
       'HANDLE.PRESS': { target: 'resizing', guard: 'roomExists', actions: ['freezeView', 'grab'] },
       'SCALE.START': { target: 'scaling', guard: 'hasDrawing' },
+      'VERTEX.PRESS': { target: 'shaping', guard: 'cornerExists', actions: ['freezeView', 'grabCorner'] },
     } },
+    shaping: { on: { 'POINTER.MOVE': { actions: 'dragCorner' }, 'POINTER.UP': { target: 'idle', actions: ['settleCorner', 'release'] }, CANCEL: { target: 'idle', actions: ['revert', 'release'] } } },
     moving: { on: { 'POINTER.MOVE': { actions: 'dragTo' }, 'POINTER.UP': { target: 'idle', actions: 'release' }, CANCEL: { target: 'idle', actions: ['revert', 'release'] } } },
     resizing: { on: { 'POINTER.MOVE': { actions: 'dragTo' }, 'POINTER.UP': { target: 'idle', actions: 'release' }, CANCEL: { target: 'idle', actions: ['revert', 'release'] } } },
     scaling: {
@@ -1794,7 +1935,7 @@ const api = {
     selection: state.sel,
     drawing: under.url ? { name: under.name, widthM: Math.round(under.w * under.mpp * 100) / 100, page: drawing.getSnapshot().context.page, pages: drawing.getSnapshot().context.pages } : null,
   }),
-  getPlan: () => ({ name: state.plan.name, units: 'm', rooms: state.plan.rooms.map(r => ({ id: r.id, name: r.name, type: r.type, x: r.x, y: r.y, w: r.w, h: r.h, ...finishFields(r), finish: finishOf(r) })), plot: state.plan.plot || null }),
+  getPlan: () => ({ name: state.plan.name, units: 'm', rooms: state.plan.rooms.map(r => ({ id: r.id, name: r.name, type: r.type, x: r.x, y: r.y, w: r.w, h: r.h, ...(r.points ? { points: r.points } : {}), area: r3(roomArea(r)), ...finishFields(r), finish: finishOf(r) })), plot: state.plan.plot || null }),
   finishes: () => Object.entries(FINISHES).map(([id, f]) => ({ id, label: f.label, wall: !!f.wall })),
   loadPlan: json => { setPlan(normalizePlan(json)); return api.getPlan(); },
   roomTypes: () => Object.keys(TYPES),
