@@ -125,7 +125,7 @@ function ImportDialog({ dialog }: { dialog: DialogRef }) {
       return Math.max(m, ...n.points.map(p => p[0] + ox));
     }, -3);
     let made: string | null = null;
-    const ok = store.commit(d => { const [next, id] = importRoomlines(d, plan, { origin: [ops.snap(right + 3), 0] }); made = id; return next; }, 'Import plan');
+    const ok = store.commit(d => { const [next, id] = importRoomlines(d, plan, { origin: [ops.snap(right + 3), 0], openings: true }); made = id; return next; }, 'Import plan');
     if (!ok) { setError(editor.getState().error ?? 'The plan could not be read'); return; }
     if (made) store.select(made);
     setError('');

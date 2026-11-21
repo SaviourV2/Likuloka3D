@@ -721,6 +721,36 @@ async function drag(page, level, grab, by, lift = 0) {
     await page.evaluate(i => likuloka.projects.remove(i), savedId);
     ok('a project can be deleted from the browser', (await page.evaluate(() => likuloka.projects.list())).length === 0);
 
+    // ---- Roomlines plans arrive whole: every built-in layout, and a shaped one
+    const layouts = [
+      { name: 'Studio', width: 6, depth: 5.5, layout: { dir: 'col', children: [{ size: 3.5, name: 'Studio room', type: 'studio' }, { size: 2, dir: 'row', children: [{ size: 2.75, name: 'Kitchen', type: 'kitchen' }, { size: 1.5, name: 'Entry', type: 'hallway' }, { size: 1.75, name: 'Bathroom', type: 'bathroom' }] }] } },
+      { name: 'One bedroom', width: 8, depth: 6.5, layout: { dir: 'row', children: [{ size: 4.75, dir: 'col', children: [{ size: 4.5, name: 'Living room', type: 'living' }, { size: 2, name: 'Kitchen', type: 'kitchen' }] }, { size: 3.25, dir: 'col', children: [{ size: 3.5, name: 'Bedroom', type: 'bedroom' }, { size: 1.25, name: 'Hallway', type: 'hallway' }, { size: 1.75, name: 'Bathroom', type: 'bathroom' }] }] } },
+      { name: 'Two bedroom', width: 10, depth: 7.75, layout: { dir: 'row', children: [{ size: 5.5, dir: 'col', children: [{ size: 4.5, name: 'Living room', type: 'living' }, { size: 3.25, name: 'Kitchen', type: 'kitchen' }] }, { size: 1.25, name: 'Hallway', type: 'hallway' }, { size: 3.25, dir: 'col', children: [{ size: 3.25, name: 'Main bedroom', type: 'bedroom' }, { size: 1.75, name: 'Bathroom', type: 'bathroom' }, { size: 2.75, name: 'Bedroom 2', type: 'bedroom' }] }] } },
+      { name: 'Family house', width: 12, depth: 10, layout: { dir: 'row', children: [{ size: 6.5, dir: 'col', children: [{ size: 5.5, name: 'Living room', type: 'living' }, { size: 4.5, dir: 'row', children: [{ size: 3.75, name: 'Kitchen', type: 'kitchen' }, { size: 2.75, name: 'Dining room', type: 'dining' }] }] }, { size: 1.5, name: 'Hallway', type: 'hallway' }, { size: 4, dir: 'col', children: [{ size: 3.5, name: 'Main bedroom', type: 'bedroom' }, { size: 1.75, name: 'Bathroom', type: 'bathroom' }, { size: 2.5, name: 'Bedroom 2', type: 'bedroom' }, { size: 2.25, name: 'Office', type: 'office' }] }] } },
+      { name: 'Shaped', plot: [[-3, -3], [14, -1], [13, 12], [-4, 10]], rooms: [
+        { name: 'Living room', type: 'living', points: [[0, 0], [7, 0], [8.5, 2.5], [7, 5], [0, 5]], floor: 'walnut', paint: '#3d4a5c' },
+        { name: 'Kitchen', type: 'kitchen', points: [[0, 5], [4, 5], [4, 8.5], [1, 8.5]] },
+        { name: 'Bedroom', type: 'bedroom', points: [[4, 5], [7, 5], [9, 8.5], [4, 8.5]] },
+        { name: 'Bathroom', type: 'bathroom', points: [[7, 5], [8.5, 2.5], [11, 4], [9.5, 6.5], [8, 6.5]] }] },
+    ];
+    const rooms = [4, 5, 6, 8, 4];
+    for (const [i, plan] of layouts.entries()) {
+      const r = await page.evaluate(plan => {
+        likuloka.reset(); const before = likuloka.getDoc().roots.length;
+        if (!likuloka.importRoomlines(plan, { openings: true })) return { error: likuloka.getState().error };
+        const d = likuloka.getDoc(), b = d.nodes[d.roots[before]], l = d.nodes[b.children[0]], kids = l.children.map(c => d.nodes[c]);
+        const walls = kids.filter(n => n.type === 'wall'), ops = walls.flatMap(w => w.children.map(c => d.nodes[c]));
+        const slanted = walls.filter(w => w.a[0] !== w.b[0] && w.a[1] !== w.b[1]).length;
+        return { zones: kids.filter(n => n.type === 'zone').length, slab: kids.filter(n => n.type === 'slab').map(s => s.points.length), walls: walls.length, slanted, doors: ops.filter(o => o.kind === 'door').length, windows: ops.filter(o => o.kind === 'window').length,
+          noDoor: likuloka.checks().filter(c => c.node && d.nodes[c.node] && d.nodes[c.node].parent === l.id && c.rule === 'no-door').length };
+      }, plan);
+      await frames(page);
+      ok(`Roomlines "${plan.name}" imports with its rooms, a slab, doors and windows`, !r.error && r.zones === rooms[i] && r.slab.length === 1 && r.slab[0] >= 4 && r.doors >= rooms[i] && r.windows >= rooms[i] - 2 && r.noDoor === 0 && (await page.evaluate(() => Object.keys(likuloka.getDoc().nodes).every(n => likuloka.world.entities.has(n)))), r);
+      if (plan.rooms) ok('a shaped Roomlines plan keeps its slanted walls', r.slanted >= 5 && r.slab[0] >= 7, r);
+    }
+    await page.evaluate(() => likuloka.reset());
+    await frames(page);
+
     ok('no page errors', errors.length === 0, errors.slice(0, 5));
   } catch (e) {
     ok('the run finished', false, String(e && e.stack || e));

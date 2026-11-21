@@ -320,7 +320,7 @@ export default function Editor() {
       setTool: store.setTool,
       setMeasure: store.setMeasure,
       load: store.load,
-      importRoomlines: (plan: RoomlinesPlan) => store.commit(d => importRoomlines(d, plan)[0], 'Import plan'),
+      importRoomlines: (plan: RoomlinesPlan, opts: { openings?: boolean } = {}) => store.commit(d => importRoomlines(d, plan, opts)[0], 'Import plan'),
       reset: () => projects.newProject(sampleScene()),
       cloud: {
         state: () => editor.getState().cloud,
