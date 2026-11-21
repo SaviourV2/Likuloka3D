@@ -16,7 +16,7 @@ const fs = require('fs');
 const path = require('path');
 
 const ROOT = path.join(__dirname, '..', 'out');
-const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.txt': 'text/plain', '.json': 'application/json', '.svg': 'image/svg+xml', '.ico': 'image/x-icon' };
+const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.txt': 'text/plain', '.glb': 'model/gltf-binary', '.json': 'application/json', '.svg': 'image/svg+xml', '.ico': 'image/x-icon' };
 let passed = 0, failed = 0;
 
 function ok(name, cond, detail) {
@@ -789,6 +789,57 @@ async function drag(page, level, grab, by, lift = 0) {
     await frames(f);
     ok('no page errors with floor finishes', errors.length === 0, errors.slice(0, 5));
     await c.close();
+  }
+
+  // ---- furniture -----------------------------------------------------------------------------
+  {
+    const { page: f, context: c, errors } = await open(browser, url);
+    await f.waitForFunction(() => likuloka.furniture().files !== 'loading' && likuloka.furniture().pieces > 0, null, { timeout: 20000 }).catch(() => {});
+    const first = await f.evaluate(() => likuloka.furniture());
+    ok('furniture is drawn from its model files', first.files === 'ready' && first.pieces > 20 && first.models > first.pieces && first.boxes === 0, first);
+    ok('the Furniture button is on', (await f.getAttribute('[data-action="furniture"]', 'aria-pressed')) === 'true');
+    const fit = await f.evaluate(() => {
+      const d = likuloka.getDoc();
+      const inside = (P, x, y) => { let k = false; for (let i = 0, j = P.length - 1; i < P.length; j = i++) { const [xi, yi] = P[i], [xj, yj] = P[j]; if ((yi > y) !== (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) k = !k; } return k; };
+      const levels = Object.values(d.nodes).filter(n => n.type === 'level');
+      let pieces = 0, out = 0, uses = new Set();
+      for (const l of levels) for (const p of likuloka.furnish(l.id)) {
+        pieces++; const z = d.nodes[p.zone]; uses.add(z.use);
+        for (const b of p.boxes) for (const [x, y] of [[b.x0, b.y0], [b.x1, b.y0], [b.x1, b.y1], [b.x0, b.y1]]) if (!inside(z.points, x, y)) out++;
+      }
+      const again = JSON.stringify(levels.map(l => likuloka.furnish(l.id))) === JSON.stringify(levels.map(l => likuloka.furnish(l.id)));
+      return { pieces, out, uses: [...uses].sort(), again };
+    });
+    ok('every piece of furniture stands inside its room', fit.pieces > 20 && fit.out === 0, fit);
+    ok('the same scene gives the same furniture', fit.again);
+    ok('bedrooms, the kitchen and the bathroom are furnished', ['bathroom', 'bedroom', 'kitchen'].every(u => fit.uses.includes(u)), fit.uses);
+    const id = await ids(f);
+    const before = await f.evaluate(() => likuloka.furniture().redraws);
+    await f.evaluate(i => likuloka.commit(d => likuloka.ops.offsetWall(d, i, 0.5), 'Move'), id.partition);
+    await frames(f);
+    ok('moving a wall lays its level out again', (await f.evaluate(() => likuloka.furniture().redraws)) === before + 1);
+    await f.evaluate(i => likuloka.select(i), id.studioZone);
+    await frames(f);
+    ok('selecting something does not redraw the furniture', (await f.evaluate(() => likuloka.furniture().redraws)) === before + 1);
+    await f.click('[data-action="furniture"]');
+    await frames(f);
+    const off = await f.evaluate(() => likuloka.furniture());
+    ok('the Furniture button takes the furniture away', off.pieces === 0 && off.models === 0, off);
+    ok('and it is not an undo step', (await f.evaluate(() => likuloka.getState().undo)) === 1);
+    ok('no page errors with furniture', errors.length === 0, errors.slice(0, 5));
+    await c.close();
+  }
+  {
+    // without the model files, furniture is drawn from boxes
+    const context = await browser.newContext({ viewport: { width: 1400, height: 900 }, reducedMotion: 'reduce' });
+    const p2 = await context.newPage();
+    await p2.route(/fonts\.(googleapis|gstatic)\.com/, r => r.abort());
+    await p2.route(/\/models\/.*\.glb$/, r => r.fulfill({ status: 404, body: '' }));
+    await p2.goto(url);
+    await p2.waitForFunction(() => window.likuloka && likuloka.furniture().files === 'missing' && likuloka.furniture().boxes > 0, null, { timeout: 60000 }).catch(() => {});
+    const boxes = await p2.evaluate(() => likuloka.furniture());
+    ok('without the model files, furniture is drawn from boxes', boxes.files === 'missing' && boxes.pieces > 20 && boxes.boxes > boxes.pieces && boxes.models === 0, boxes);
+    await context.close();
   }
 
   // ---- glass and the grid ---------------------------------------------------------------------

@@ -9,6 +9,7 @@ import { applyProduct, BUNDLED, fetchCatalogue, productFor } from '@/scene/catal
 import * as store from '@/scene/store';
 import { editor, isUnsaved, useEditor } from '@/scene/store';
 import { GRID, type SceneDoc } from '@/scene/types';
+import { furniture } from '@/ecs/furniture';
 import { world } from '@/ecs/world';
 import { endChain, rig } from '@/render/interact';
 import Tree from './Tree';
@@ -20,6 +21,7 @@ import { ifcFile } from '@/scene/ifc';
 import { dxfFile } from '@/scene/dxf';
 import { rememberedName } from '@/scene/versions';
 import { checks } from '@/scene/checks';
+import { furnishLevel } from '@/scene/furnish';
 import { compare, versionStore } from '@/scene/versions';
 
 // three.js and WebGPU need the browser, so the viewport is never rendered on the server.
@@ -134,6 +136,7 @@ function Toolbar({ menu }: { menu: [string, string, () => void][] }) {
   const drawing = useEditor(s => s.interaction.kind === 'drawing-wall' && !!s.interaction.from);
   const cut = useEditor(s => s.cut);
   const measure = useEditor(s => s.measure);
+  const furnished = useEditor(s => s.furniture);
   const client = useEditor(store.isClient);
   return (
     <header className="bar glass" data-role={client ? 'client' : 'designer'}>
@@ -151,6 +154,7 @@ function Toolbar({ menu }: { menu: [string, string, () => void][] }) {
       {(tool === 'door' || tool === 'window') && <span className="hint">Click a wall to add a {tool}. Esc to stop.</span>}
       <span className="spacer" />
       <button type="button" aria-pressed={cut} data-action="cut" title="Cut walls at 1.2 m so rooms can be seen into" onClick={() => store.setCut(!cut)}>Cut</button>
+      <button type="button" aria-pressed={furnished} data-action="furniture" title="Show furniture in every room, laid out from the rooms" onClick={() => store.setFurniture(!furnished)}>Furniture</button>
       <button type="button" aria-pressed={measure} data-action="measure" title="Show the size of every door and window (M)" onClick={() => store.setMeasure(!measure)}>Measure</button>
       <button type="button" className="icon" data-action="undo" aria-label="Undo" disabled={!undoLabel} title={undoLabel ? `Undo ${undoLabel} (Ctrl+Z)` : 'Nothing to undo'} onClick={() => store.undo()}>↶</button>
       <button type="button" className="icon" data-action="redo" aria-label="Redo" disabled={!redoLabel} title={redoLabel ? `Redo ${redoLabel} (Ctrl+Shift+Z)` : 'Nothing to redo'} onClick={() => store.redo()}>↷</button>
@@ -304,7 +308,7 @@ export default function Editor() {
       getState: () => {
         const s = editor.getState();
         return {
-          cut: s.cut, measure: s.measure, tool: s.tool, interaction: s.interaction, selection: s.selection, activeLevel: s.activeLevel,
+          cut: s.cut, measure: s.measure, furniture: s.furniture, tool: s.tool, interaction: s.interaction, selection: s.selection, activeLevel: s.activeLevel,
           views: s.views, undo: s.past.length, redo: s.future.length, error: s.error, gesture: !!s.gesture,
           project: { id: s.project.id, name: s.doc.name, unsaved: isUnsaved(s), savedAt: s.project.savedAt },
         };
@@ -320,6 +324,9 @@ export default function Editor() {
       setView: store.setView,
       setTool: store.setTool,
       setMeasure: store.setMeasure,
+      setFurniture: store.setFurniture,
+      furniture: () => ({ files: furniture.models, ...furniture.stats }),
+      furnish: (level: string) => furnishLevel(editor.getState().doc, level),
       load: store.load,
       importRoomlines: (plan: RoomlinesPlan, opts: { openings?: boolean } = {}) => store.commit(d => importRoomlines(d, plan, opts)[0], 'Import plan'),
       reset: () => projects.newProject(sampleScene()),

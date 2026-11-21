@@ -12,6 +12,7 @@ import { Canvas, events, extend, useFrame, useThree, type ThreeToJSXElements } f
 import * as THREE from 'three/webgpu';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { color, float, mix, screenUV, smoothstep } from 'three/tsl';
+import { furniture } from '@/ecs/furniture';
 import { world } from '@/ecs/world';
 import { CUT, cutHeight, materials, motion } from '@/ecs/materials';
 import { diff } from '@/scene/ops';
@@ -50,6 +51,9 @@ function Systems() {
   useFrame((_, dt) => {
     const s = editor.getState();
     world.step(s.doc, s.views, s.selection, s.cut, Math.min(dt, 0.1));
+    // The model files are asked for the first time furniture is shown; the view is drawn again when they are in.
+    if (s.furniture) furniture.load(invalidate);
+    furniture.step(s.doc, s.furniture, s.cut);
     let animating = false;
     for (const l of world.levels.values()) if (l.y !== l.target) { animating = true; break; }
     // A selection glows from the shader's clock, so it needs frames while selected.

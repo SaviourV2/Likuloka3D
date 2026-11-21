@@ -8,6 +8,7 @@
 import { useLayoutEffect, useMemo, useRef } from 'react';
 import type { ThreeEvent } from '@react-three/fiber';
 import * as THREE from 'three/webgpu';
+import { furniture } from '@/ecs/furniture';
 import { world } from '@/ecs/world';
 import { CUT, materials, UNIT_BOX } from '@/ecs/materials';
 import { editor, select, useEditor } from '@/scene/store';
@@ -98,6 +99,18 @@ function MoveRing({ building }: { building: Id }) {
   );
 }
 
+/** The level's furniture: an empty group the furniture system fills. */
+function Furnishings({ level }: { level: Id }) {
+  const ref = useRef<THREE.Group>(null);
+  useLayoutEffect(() => {
+    const g = ref.current!;
+    furniture.attach(level, g);
+    rig.invalidate();
+    return () => { furniture.detach(level, g); };
+  }, [level]);
+  return <group ref={ref} />;
+}
+
 function Level({ id }: { id: Id }) {
   const ref = useEntity<THREE.Group>(id, 'level');
   const kids = useEditor(children(id));
@@ -108,6 +121,7 @@ function Level({ id }: { id: Id }) {
       {kids.map((k, i) => list[i] === 'wall' ? <Wall key={k} id={k} />
         : list[i] === 'zone' ? <Zone key={k} id={k} />
         : list[i] === 'slab' ? <Slab key={k} id={k} /> : null)}
+      <Furnishings level={id} />
       <Handles level={id} />
       <WallPreview level={id} />
     </group>

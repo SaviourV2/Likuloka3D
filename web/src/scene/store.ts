@@ -54,6 +54,8 @@ export interface EditorState {
   cut: boolean;
   /** Sizes shown on every door and window in the view, not only the selected one. A plain setting. */
   measure: boolean;
+  /** Furniture drawn in every room, worked out from the rooms. A plain setting. */
+  furniture: boolean;
   /**
    * The open project: its id in browser storage, and the document as it was
    * last saved. The project has unsaved changes when `doc !== saved`.
@@ -84,6 +86,7 @@ const initial: EditorState = {
   interaction: { kind: 'idle' },
   cut: true,
   measure: false,
+  furniture: true,
   project: { id: 'project-new', saved: null, savedAt: null, where: 'local' },
   catalogue: BUNDLED,
   role: { kind: 'designer' },
@@ -282,6 +285,10 @@ export function clearError() {
 
 export function setCut(cut: boolean) {
   set({ cut });
+}
+
+export function setFurniture(furniture: boolean) {
+  set({ furniture });
 }
 
 export function setMeasure(measure: boolean) {
