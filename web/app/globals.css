@@ -492,3 +492,80 @@ kbd { background: rgba(111, 208, 255, .1); color: var(--accent); box-shadow: ins
   .bar > button, .menu > summary { padding-left: 7px; padding-right: 7px; }
   .project-name { width: 9ch; }
 }
+
+/* ==========================================================================
+   Welcome page (/welcome/): the hero of likuloka.com, in the night edition.
+   Same grid, sizes and motion as the site's hero; its own copy and drawing.
+   ========================================================================== */
+.welcome { position: relative; z-index: 1; min-height: 100%; font-size: 16px; line-height: 1.6; --rise: cubic-bezier(.16, 1, .3, 1); --bounce: cubic-bezier(.22, 1.28, .36, 1); }
+.welcome .hero {
+  border-bottom: 1px solid var(--hair); overflow: hidden; overflow: clip;
+  background:
+    linear-gradient(var(--hair), var(--hair)) 33.33% 0 / 1px 100% no-repeat,
+    linear-gradient(var(--hair), var(--hair)) 66.66% 0 / 1px 100% no-repeat;
+}
+.welcome .wrap {
+  max-width: 1240px; margin: 0 auto; padding: 56px 20px 64px;
+  display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, .85fr); gap: 40px; align-items: center;
+}
+.welcome .kicker { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+.welcome .kicker b { font: 400 13px/1.6 var(--font-data); color: var(--accent); }
+.welcome .kicker span { height: 1px; flex: 0 0 48px; background: var(--accent); }
+.welcome h1 {
+  margin: 0; font-size: clamp(64px, 11vw, 148px); line-height: 1; font-weight: 900; font-stretch: 85%;
+  text-transform: uppercase; letter-spacing: -.045em; color: var(--accent); text-wrap: balance;
+}
+.welcome h1 .ln { display: block; overflow: hidden; }
+.welcome h1 .ln > span { display: block; }
+.welcome .lede { font-size: clamp(17px, 1.6vw, 20px); color: var(--muted); margin: 22px 0 0; max-width: 52ch; }
+.welcome .ctas { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 30px; }
+.welcome .cta {
+  display: inline-flex; align-items: center; gap: 8px; font-weight: 700; font-size: 15px; line-height: 1.6;
+  padding: 12px 20px; border-radius: 999px; border: 1.5px solid var(--accent);
+  background: var(--accent); color: var(--accent-ink); text-decoration: none;
+}
+.welcome .cta:hover { box-shadow: var(--accent-glow); }
+.welcome .cta.ghost { background: transparent; color: var(--accent); }
+.welcome .cta.ghost:hover { background: var(--accent-soft); }
+.welcome .cta:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.welcome .facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin-top: 40px; border-top: 1px solid var(--hair); }
+.welcome .facts div { padding: 14px 14px 0 0; }
+.welcome .facts strong { display: block; font-size: 30px; font-weight: 800; line-height: 1.6; letter-spacing: -.03em; color: var(--accent); }
+.welcome .facts span { font-size: 13px; color: var(--muted); }
+.welcome figure { margin: 0; position: relative; }
+.welcome figure svg {
+  display: block; max-width: 100%; max-height: 560px; margin-left: auto; /* sized by its width and height attributes, as the site's image is */
+  transform: translate3d(0, var(--par, 0px), 0) scale(1.02);
+}
+.welcome figure path { fill: none; stroke: var(--accent); vector-effect: non-scaling-stroke; stroke-linecap: round; }
+.welcome .d-strong { stroke-width: 1.4; }
+.welcome .d-thin { stroke-width: .9; opacity: .7; }
+.welcome .d-hidden { stroke-width: .8; stroke-dasharray: 4 4; opacity: .35; }
+.welcome .d-dashed { stroke: var(--accent-2); stroke-width: .7; stroke-dasharray: 2 6; opacity: .55; }
+.welcome figure text { font: 600 13px var(--font-data); fill: var(--accent); }
+@media (max-width: 860px) {
+  .welcome .wrap { grid-template-columns: minmax(0, 1fr); }
+  .welcome .hero { background: none; }
+  .welcome figure svg { max-height: 320px; margin-inline: auto; }
+}
+@media (max-width: 560px) {
+  .welcome .kicker { flex-wrap: wrap; }
+  .welcome .kicker b { font-size: 11.5px; }
+  .welcome .kicker span { flex-basis: 32px; }
+  .welcome .facts { gap: 10px; }
+  .welcome .facts strong { font-size: 24px; }
+}
+/* The motion: title lines rise out of their masks 90 ms apart; the text, the buttons and each fact
+   fade up 70 ms apart, the fade and blur easing out and the lift with a small spring. */
+@media (prefers-reduced-motion: no-preference) {
+  .welcome h1 .ln > span { animation: welcome-rise 1s var(--rise) both; }
+  .welcome h1 .ln:nth-child(2) > span { animation-delay: .09s; }
+  .welcome .lede, .welcome .ctas, .welcome .facts > div {
+    animation: welcome-fade .9s var(--rise) var(--d, 0s) both, welcome-lift 1s var(--bounce) var(--d, 0s) both;
+  }
+  .welcome .facts > div:nth-child(2) { --d: 70ms; }
+  .welcome .facts > div:nth-child(3) { --d: 140ms; }
+  @keyframes welcome-rise { from { transform: translateY(105%); } }
+  @keyframes welcome-fade { from { opacity: 0; filter: blur(6px); } }
+  @keyframes welcome-lift { from { transform: translateY(28px) scale(.985); } }
+}

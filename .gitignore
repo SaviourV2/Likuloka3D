@@ -1,1 +1,3 @@
 node_modules/
+# Frame captures and comparisons from the reanimate skill: local evidence, not source
+.reanimate/

@@ -1099,6 +1099,45 @@ async function drag(page, level, grab, by, lift = 0) {
     await c.close();
   }
 
+  // ---- the welcome page ------------------------------------------------------------------------
+  for (const [viewport, motion] of [[{ width: 1400, height: 900 }, 'no-preference'], [{ width: 400, height: 800 }, 'reduce']]) {
+    const c = await browser.newContext({ viewport, reducedMotion: motion });
+    const p = await c.newPage();
+    const errors = [];
+    p.on('pageerror', e => errors.push(e.message));
+    await p.route(/fonts\.(googleapis|gstatic)\.com/, r => r.abort());
+    await p.goto(url + 'welcome/');
+    await p.waitForSelector('.welcome .hero');
+    const at = `${viewport.width}×${viewport.height}`;
+    const start = await p.evaluate(() => document.getAnimations().filter(a => a.animationName?.startsWith('welcome-')).map(a => [a.animationName, a.effect.getTiming().duration, a.effect.getTiming().delay]));
+    if (motion === 'reduce') ok(`welcome at ${at}: nothing animates with reduced motion`, start.length === 0, start);
+    else {
+      const rise = start.filter(a => a[0] === 'welcome-rise');
+      ok(`welcome at ${at}: the two title lines rise for 1 s, 90 ms apart`, rise.length === 2 && rise.every(a => a[1] === 1000) && rise[1][2] === 90, rise);
+      const fades = start.filter(a => a[0] === 'welcome-fade').map(a => a[2]);
+      ok(`welcome at ${at}: text, buttons and the facts fade up, the facts 70 ms apart`, JSON.stringify(fades) === JSON.stringify([0, 0, 0, 70, 140]), fades);
+    }
+    await p.waitForTimeout(motion === 'reduce' ? 50 : 1300);
+    const s = await p.evaluate(() => {
+      const box = e => { const r = e.getBoundingClientRect(); return { l: r.left, r: r.right, t: r.top, b: r.bottom }; };
+      return {
+        scroll: document.documentElement.scrollWidth,
+        lines: [...document.querySelectorAll('.welcome h1 .ln')].map(e => e.scrollWidth - e.clientWidth),
+        shown: ['.lede', '.ctas', '.facts > div'].every(q => [...document.querySelectorAll('.welcome ' + q)].every(e => getComputedStyle(e).opacity === '1')),
+        editor: document.querySelector('.welcome .cta').getAttribute('href'),
+        drawing: box(document.querySelector('.welcome figure svg')),
+        text: box(document.querySelector('.welcome .wrap > div')),
+      };
+    });
+    ok(`welcome at ${at}: no sideways scroll and the title fits its column`, s.scroll <= viewport.width && s.lines.every(d => d <= 0), s);
+    ok(`welcome at ${at}: everything is shown once the motion ends`, s.shown, s);
+    ok(`welcome at ${at}: the first button opens the editor`, s.editor === '/', s.editor);
+    const overlap = !(s.drawing.r <= s.text.l || s.drawing.l >= s.text.r || s.drawing.b <= s.text.t || s.drawing.t >= s.text.b);
+    ok(`welcome at ${at}: the drawing does not cover the text`, !overlap, s);
+    ok(`welcome at ${at}: no page errors`, errors.length === 0, errors.slice(0, 5));
+    await c.close();
+  }
+
   await browser.close();
   server.close();
   console.log(`\n${passed} passed, ${failed} failed`);
