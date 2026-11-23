@@ -15,6 +15,7 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { furnishLevel, type FurnitureBox, type FurnitureModel } from '@/scene/furnish';
 import type { Id, SceneDoc } from '@/scene/types';
 import { CUT, UNIT_BOX } from './materials';
+import { asset } from '@/scene/site';
 
 export const MODEL_NAMES = [
   'bathroomCabinetDrawer', 'bathroomMirror', 'bathtub', 'bedDouble', 'bedSingle', 'bookcaseClosedDoors', 'bookcaseOpen',
@@ -61,7 +62,7 @@ class Furniture {
     this.models = 'loading';
     const loader = new GLTFLoader();
     Promise.all(MODEL_NAMES.map(async name => {
-      const gltf = await loader.loadAsync(`models/${name}.glb`);
+      const gltf = await loader.loadAsync(asset(`models/${name}.glb`));
       const scene = gltf.scene; scene.updateMatrixWorld(true);
       const box = new THREE.Box3().setFromObject(scene), size = box.getSize(new THREE.Vector3());
       if (!(size.x > 0 && size.y > 0 && size.z > 0)) throw new Error(`empty model ${name}`);

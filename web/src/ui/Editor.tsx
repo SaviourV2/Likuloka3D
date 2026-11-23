@@ -1,5 +1,7 @@
 'use client';
 import dynamic from 'next/dynamic';
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { Vector3 } from 'three/webgpu';
 import { useEffect, useRef, useState } from 'react';
 import * as ops from '@/scene/ops';
@@ -142,7 +144,7 @@ function Toolbar({ menu }: { menu: [string, string, () => void][] }) {
   const client = useEditor(store.isClient);
   return (
     <header className="bar glass" data-role={client ? 'client' : 'designer'}>
-      <span className="brand"><b>Likuloka</b> 3D</span>
+      <Link className="brand" href="/" title="Welcome page" data-action="welcome-page"><b>Likuloka</b> 3D</Link>
       <ProjectName />
       <SaveButton />
       {client && <span className="badge" title="You can choose doors, windows, finishes and room uses">Client view</span>}
@@ -248,6 +250,7 @@ export default function Editor() {
   const versionsDialog = useRef<HTMLDialogElement>(null);
   const [versionsOpen, setVersionsOpen] = useState(false);
   const checksDialog = useRef<HTMLDialogElement>(null);
+  const router = useRouter();
   const [checksOpen, setChecksOpen] = useState(false);
 
   useEffect(() => {
@@ -273,7 +276,7 @@ export default function Editor() {
     const unsub = editor.subscribe((s, prev) => {
       if ((s.doc === prev.doc && s.project === prev.project) || s.gesture) return;
       window.clearTimeout(timer);
-      timer = window.setTimeout(projects.writeDraft, 400);
+      timer = window.setTimeout(() => { timer = 0; projects.writeDraft(); }, 400);
     });
 
     const onKey = (e: KeyboardEvent) => {
@@ -404,7 +407,11 @@ export default function Editor() {
       world,
     };
     (window as unknown as { likuloka: typeof api }).likuloka = api;
-    return () => { unsub(); window.removeEventListener('keydown', onKey); window.clearTimeout(timer); };
+    return () => {
+      unsub(); window.removeEventListener('keydown', onKey);
+      // Leaving for another page of the site unmounts the editor: write a draft still waiting on its timer now.
+      if (timer) { window.clearTimeout(timer); projects.writeDraft(); }
+    };
   }, []);
 
   return (
@@ -425,6 +432,8 @@ export default function Editor() {
           download(name, ifcFile(s.doc, { projectId: s.project.id, catalogue: s.catalogue, fileName: name, author: rememberedName() }), 'application/x-step');
         }],
         ['checks', 'Checks…', () => { setChecksOpen(true); checksDialog.current?.showModal(); }],
+        // The working copy is kept as a draft, so leaving the editor loses nothing.
+        ['welcome', 'Welcome page', () => router.push('/')],
       ]} />
       <Tree />
       <main className="stage">

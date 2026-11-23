@@ -71,6 +71,8 @@ button, input, select, textarea { font: inherit; color: inherit; }
 }
 .brand { font-weight: 800; letter-spacing: -.01em; color: var(--accent); white-space: nowrap; }
 .brand b { font-weight: 900; }
+a.brand { text-decoration: none; border-radius: 6px; }
+a.brand:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .bar .spacer { flex: 1; }
 .bar .hint { color: var(--muted); font-size: 13px; }
 .bar > button, .actions button, .add, .mini, .danger {

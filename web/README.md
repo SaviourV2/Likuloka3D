@@ -16,7 +16,7 @@ npm install
 npm run dev
 ```
 
-Open http://localhost:3000. To build the site:
+Open http://localhost:3000 for the welcome page, or http://localhost:3000/editor/ for the editor itself. The welcome page sends share links made before the editor moved to `/editor/` on to it. To build the site:
 
 ```bash
 npm run build

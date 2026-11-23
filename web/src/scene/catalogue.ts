@@ -10,6 +10,7 @@
 import bundled from '../../public/catalogue.json';
 import { openingFor, OPENING_FINISHES, OPENING_SHAPES, type OpeningFinish, type OpeningKind, type OpeningShape, type SceneDoc, type WallLayer, type Id } from './types';
 import { updateOpening, updateWall } from './ops';
+import { asset } from '@/scene/site';
 
 export interface Product {
   code: string;
@@ -92,7 +93,7 @@ export const BUNDLED = parseCatalogue(bundled);
 /** Fetches the catalogue from the site, falling back to the bundled copy. */
 export async function fetchCatalogue(): Promise<Catalogue> {
   try {
-    const res = await fetch('catalogue.json', { cache: 'no-cache' });
+    const res = await fetch(asset('catalogue.json'), { cache: 'no-cache' });
     if (!res.ok) throw new Error(String(res.status));
     return parseCatalogue(await res.json());
   } catch {

@@ -17,6 +17,7 @@ import { migrate, validate } from './ops';
 import { saveProject } from './projects';
 import { setCloudVersions, type Approval, type Version, type VersionStore } from './versions';
 import type { SceneDoc } from './types';
+import { asset } from '@/scene/site';
 
 type FirebaseApp = import('firebase/app').FirebaseApp;
 type Auth = import('firebase/auth').Auth;
@@ -92,7 +93,7 @@ export function explain(e: unknown): string {
 export async function startCloud(): Promise<boolean> {
   let config: CloudConfig;
   try {
-    const res = await fetch('cloud.json', { cache: 'no-cache' });
+    const res = await fetch(asset('cloud.json'), { cache: 'no-cache' });
     if (!res.ok) throw new Error();
     config = await res.json();
     if (!config?.projectId || !config?.apiKey) throw new Error();

@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useEffect, useRef } from 'react';
 import { drawing } from './welcomeDrawing';
 
@@ -11,6 +12,13 @@ import { drawing } from './welcomeDrawing';
  */
 export default function Welcome() {
   const art = useRef<SVGSVGElement>(null);
+  const router = useRouter();
+
+  // Share links made before the editor moved to /editor/ point here: send them on, query and all.
+  useEffect(() => {
+    const q = new URLSearchParams(location.search);
+    if (q.get('project') && q.get('invite')) router.replace(`/editor/${location.search}`);
+  }, [router]);
 
   // The drawing moves at 0.18 of the scroll, one write per frame, and not at all with reduced motion.
   useEffect(() => {
@@ -46,7 +54,7 @@ export default function Welcome() {
               CAD and BIM come out of the same model.
             </p>
             <div className="ctas">
-              <Link className="cta" href="/">Open the editor</Link>
+              <Link className="cta" href="/editor/">Open the editor</Link>
               <a className="cta ghost" href="https://github.com/SaviourV2/Likuloka3D/tree/main/web#readme">What it does</a>
             </div>
             <div className="facts">

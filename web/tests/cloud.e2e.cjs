@@ -69,7 +69,8 @@ async function createAccount(page, name, email) {
 
 (async () => {
   const server = await serve();
-  const url = `http://127.0.0.1:${server.address().port}/`;
+  // The editor is at /editor/; the site's front page is the welcome page.
+  const url = `http://127.0.0.1:${server.address().port}/editor/`;
   const browser = await chromium.launch();
   const stamp = Date.now().toString(36);
   try {

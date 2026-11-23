@@ -112,7 +112,9 @@ async function drag(page, level, grab, by, lift = 0) {
 (async () => {
   if (!fs.existsSync(path.join(ROOT, 'index.html'))) { console.error('Run `npm run build` first: out/index.html is missing.'); process.exit(1); }
   const server = await serve();
-  const url = `http://127.0.0.1:${server.address().port}/`;
+  const site = `http://127.0.0.1:${server.address().port}/`;
+  // The welcome page is the site's front page; the editor is at /editor/.
+  const url = site + 'editor/';
   const browser = await launch();
   const { page, context, errors } = await open(browser, url);
   // Confirm prompts (discard changes, restore a version, delete) are accepted.
@@ -1106,7 +1108,7 @@ async function drag(page, level, grab, by, lift = 0) {
     const errors = [];
     p.on('pageerror', e => errors.push(e.message));
     await p.route(/fonts\.(googleapis|gstatic)\.com/, r => r.abort());
-    await p.goto(url + 'welcome/');
+    await p.goto(site);
     await p.waitForSelector('.welcome .hero');
     const at = `${viewport.width}×${viewport.height}`;
     const start = await p.evaluate(() => document.getAnimations().filter(a => a.animationName?.startsWith('welcome-')).map(a => [a.animationName, a.effect.getTiming().duration, a.effect.getTiming().delay]));
@@ -1131,10 +1133,35 @@ async function drag(page, level, grab, by, lift = 0) {
     });
     ok(`welcome at ${at}: no sideways scroll and the title fits its column`, s.scroll <= viewport.width && s.lines.every(d => d <= 0), s);
     ok(`welcome at ${at}: everything is shown once the motion ends`, s.shown, s);
-    ok(`welcome at ${at}: the first button opens the editor`, s.editor === '/', s.editor);
+    ok(`welcome at ${at}: the first button opens the editor`, s.editor === '/editor/', s.editor);
     const overlap = !(s.drawing.r <= s.text.l || s.drawing.l >= s.text.r || s.drawing.b <= s.text.t || s.drawing.t >= s.text.b);
     ok(`welcome at ${at}: the drawing does not cover the text`, !overlap, s);
     ok(`welcome at ${at}: no page errors`, errors.length === 0, errors.slice(0, 5));
+    await c.close();
+  }
+
+  // ---- between the welcome page and the editor ------------------------------------------------
+  {
+    const { page: p, context: c, errors } = await open(browser, url);
+    ok('the editor\'s brand links to the welcome page', await p.getAttribute('.bar a.brand', 'href') === '/');
+    // An edit made just before leaving is still there on coming back.
+    await p.evaluate(() => likuloka.commit(d => likuloka.ops.renameProject(d, 'Left in a hurry'), 'Rename project'));
+    const named = await p.evaluate(() => likuloka.getDoc().name);
+    ok('the edit is made', named === 'Left in a hurry', named);
+    await p.click('[data-action="menu"]');
+    await p.click('[data-action="welcome"]');
+    await p.waitForURL(site);
+    await p.waitForSelector('.welcome .hero');
+    ok('the Project menu goes to the welcome page', new URL(p.url()).pathname === '/');
+    await p.click('.welcome .cta:not(.ghost)');
+    await p.waitForURL(url);
+    await p.waitForFunction(() => window.likuloka && ['WebGPU', 'WebGL 2'].includes(document.documentElement.dataset.backend), null, { timeout: 60000 });
+    ok('the welcome page\'s button opens the editor, with the work as it was left', await p.evaluate(() => likuloka.getDoc().name) === named, named);
+    // A share link made when the editor was at the front page still reaches it.
+    await p.goto(site + '?project=p1&invite=t1');
+    await p.waitForURL(u => u.pathname === '/editor/');
+    ok('an old share link is sent on to the editor with its query', new URL(p.url()).search === '?project=p1&invite=t1', p.url());
+    ok('no page errors going between the pages', errors.length === 0, errors.slice(0, 5));
     await c.close();
   }
 
