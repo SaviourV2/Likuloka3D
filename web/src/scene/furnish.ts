@@ -353,7 +353,7 @@ export function inset(P: Pt[], by: number[]): Pt[] {
 }
 
 /** The wall an edge of a room lies on, if any. */
-function wallAt(A: Pt, B: Pt, walls: WallNode[]): WallNode | null {
+export function wallAt(A: Pt, B: Pt, walls: WallNode[]): WallNode | null {
   const m: Pt = [(A[0] + B[0]) / 2, (A[1] + B[1]) / 2], len = Math.hypot(B[0] - A[0], B[1] - A[1]) || 1e-9, u: Pt = [(B[0] - A[0]) / len, (B[1] - A[1]) / len];
   for (const w of walls) {
     const wl = Math.hypot(w.b[0] - w.a[0], w.b[1] - w.a[1]) || 1e-9, wu: Pt = [(w.b[0] - w.a[0]) / wl, (w.b[1] - w.a[1]) / wl];

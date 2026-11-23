@@ -7,9 +7,10 @@
  * The model files are the CC0 kit in `public/models`. An asset without a model
  * there is drawn from its boxes alone.
  */
-import { addItem, SceneError, updateZone } from './ops';
+import { addItem, addOpeningAt, addWall, addZone, SceneError, snap, updateZone } from './ops';
 import { bedItem, C, carItem, furnishLevel, islandItem, kitchenRun, lighten, plantItem, shelfItem, sofaItem, stoolsItem, sunkenBedItem, tableSet, type Item, type Part } from './furnish';
-import type { Id, SceneDoc, Vec2 } from './types';
+import { wallAt } from './furnish';
+import type { Id, RoomType, SceneDoc, Vec2, WallNode } from './types';
 
 export type AssetGroup = 'Living' | 'Bedroom' | 'Kitchen and dining' | 'Bathroom and laundry' | 'Decor' | 'Stairs' | 'Outdoor and garage';
 export interface Asset { key: string; label: string; group: AssetGroup; make: (o: { height: number; tint: number }) => Item }
@@ -60,8 +61,13 @@ export const ASSETS: Asset[] = [
   { key: 'bed-single', label: 'Single bed', group: 'Bedroom', make: o => ({ ...bedItem(0.95, false, o.tint), label: 'Single bed' }) },
   { key: 'bed-sunken', label: 'Sunken bed', group: 'Bedroom', make: o => ({ ...sunkenBedItem(1.6, o.tint), label: 'Sunken bed' }) },
   { key: 'wardrobe', label: 'Wardrobe', group: 'Bedroom', make: () => one('Wardrobe', 1.8, 0.6, [[0, 1.8, 0, 0.6, 0, 2.1, C.ward], [0.89, 0.91, 0.6, 0.605, 0.05, 2.05, C.dark]], [['bookcaseClosedDoors', 0, 0.9, 0, 0.6, 0, 2.1], ['bookcaseClosedDoors', 0.9, 1.8, 0, 0.6, 0, 2.1]], { tall: true }) },
+  { key: 'cupboard', label: 'Cupboard', group: 'Bedroom', make: () => one('Cupboard', 0.9, 0.5, [[0, 0.9, 0, 0.5, 0, 1.1, C.ward], [0.44, 0.46, 0.5, 0.505, 0.05, 1.05, C.dark], [0, 0.9, 0, 0.52, 1.1, 1.13, C.wood]]) },
   { key: 'side-table', label: 'Bedside table with lamp', group: 'Bedroom', make: () => one('Bedside table', 0.44, 0.4, [[0, 0.44, 0, 0.4, 0, 0.46, C.wood], [0.13, 0.31, 0.11, 0.29, 0.46, 0.76, 0xf1e3c4, 'cyl']], [['cabinetBed', 0, 0.44, 0, 0.4, 0, 0.48], ['lampRoundTable', 0.11, 0.33, 0.09, 0.31, 0.48, 0.9]]) },
 
+  { key: 'stove', label: 'Stove', group: 'Kitchen and dining', make: () => one('Stove', 0.6, 0.63, [[0, 0.6, 0.02, 0.6, 0, 0.86, C.cab], [0, 0.6, 0, 0.63, 0.86, 0.9, C.stone], [0.04, 0.56, 0.08, 0.56, 0.9, 0.908, C.black]], [['kitchenStove', 0, 0.6, 0, 0.63, 0, 0.92]]) },
+  { key: 'fridge', label: 'Fridge', group: 'Kitchen and dining', make: () => one('Fridge', 0.66, 0.68, [[0, 0.66, 0.02, 0.68, 0, 1.9, C.steel]], [['kitchenFridge', 0, 0.66, 0.02, 0.68, 0, 1.9]], { tall: true }) },
+  { key: 'kitchen-sink', label: 'Kitchen sink', group: 'Kitchen and dining', make: () => one('Kitchen sink', 0.8, 0.63, [[0, 0.8, 0.02, 0.6, 0, 0.86, C.cab], [0, 0.8, 0, 0.63, 0.86, 0.9, C.stone], [0.15, 0.65, 0.12, 0.5, 0.9, 0.906, 0x99a3ac]], [['kitchenSink', 0, 0.8, 0, 0.63, 0, 1.0]]) },
+  { key: 'kitchen-cabinet', label: 'Kitchen cabinet', group: 'Kitchen and dining', make: () => one('Kitchen cabinet', 0.6, 0.63, [[0, 0.6, 0.02, 0.6, 0, 0.86, C.cab], [0, 0.6, 0, 0.63, 0.86, 0.9, C.stone]], [['kitchenCabinetDrawer', 0, 0.6, 0, 0.63, 0, 0.92]]) },
   { key: 'kitchen-run', label: 'Kitchen run, 3 m', group: 'Kitchen and dining', make: () => ({ ...kitchenRun(3, true), label: 'Kitchen run' }) },
   { key: 'island', label: 'Kitchen island', group: 'Kitchen and dining', make: () => ({ ...islandItem(1.8), label: 'Kitchen island' }) },
   { key: 'stools', label: 'Bar stools', group: 'Kitchen and dining', make: () => ({ ...stoolsItem(1.8), label: 'Bar stools' }) },
@@ -89,6 +95,8 @@ export const ASSETS: Asset[] = [
   { key: 'stair-l', label: 'L stair with landing', group: 'Stairs', make: o => lStair(o.height) },
   { key: 'stair-u', label: 'U stair with landing', group: 'Stairs', make: o => uStair(o.height) },
 
+  { key: 'parking', label: 'Parking bay with car', group: 'Outdoor and garage', make: () => { const car = carItem(); return one('Parking bay', 2.5, 5, [[0, 0.08, 0, 5, 0.004, 0.012, 0xf4f1e6], [2.42, 2.5, 0, 5, 0.004, 0.012, 0xf4f1e6], [0, 2.5, 0, 0.08, 0.004, 0.012, 0xf4f1e6], ...car.parts.map(p => [p[0] + 0.35, p[1] + 0.35, p[2] + 0.3, p[3] + 0.3, p[4], p[5], p[6]] as Part)]); } },
+  { key: 'parking-empty', label: 'Parking bay, empty', group: 'Outdoor and garage', make: () => one('Parking bay', 2.5, 5, [[0, 0.08, 0, 5, 0.004, 0.012, 0xf4f1e6], [2.42, 2.5, 0, 5, 0.004, 0.012, 0xf4f1e6], [0, 2.5, 0, 0.08, 0.004, 0.012, 0xf4f1e6]], undefined, { soft: true }) },
   { key: 'car', label: 'Car', group: 'Outdoor and garage', make: () => carItem() },
   { key: 'sunbed', label: 'Sun lounger', group: 'Outdoor and garage', make: o => one('Sun lounger', 0.7, 2.0, [[0, 0.7, 0, 2.0, 0.22, 0.3, C.wood], [0.03, 0.67, 0.03, 1.97, 0.3, 0.36, o.tint], [0.03, 0.67, 0.03, 0.6, 0.36, 0.52, o.tint], [0.03, 0.1, 0.1, 0.17, 0, 0.22, C.dark], [0.6, 0.67, 0.1, 0.17, 0, 0.22, C.dark], [0.03, 0.1, 1.8, 1.87, 0, 0.22, C.dark], [0.6, 0.67, 1.8, 1.87, 0, 0.22, C.dark]]) },
   { key: 'outdoor-table', label: 'Outdoor table, 4 chairs', group: 'Outdoor and garage', make: () => ({ ...tableSet(1.2, 0.8), label: 'Outdoor table' }) },
@@ -124,4 +132,67 @@ export function ownFurniture(doc: SceneDoc, zoneId: Id): [SceneDoc, number] {
   let next = updateZone(doc, zoneId, { auto: false });
   for (const p of pieces) [next] = addItem(next, z.parent, { asset: p.tag ?? 'furniture', name: p.local.label, at: p.local.at, turn: p.local.turn, size: p.local.size, parts: p.local.parts, models: p.local.models, tint: p.tint });
   return [next, pieces.length];
+}
+
+/** Rooms to drop onto a level: a use and a size on the 0.25 m grid. */
+export interface RoomPreset { key: string; label: string; use: RoomType; size: readonly [number, number] }
+export const ROOM_PRESETS: RoomPreset[] = [
+  { key: 'room-bedroom', label: 'Bedroom 3.5 × 4', use: 'bedroom', size: [3.5, 4] },
+  { key: 'room-master', label: 'Master bedroom 4.5 × 5', use: 'bedroom', size: [4.5, 5] },
+  { key: 'room-bathroom', label: 'Bathroom 2 × 2.5', use: 'bathroom', size: [2, 2.5] },
+  { key: 'room-kitchen', label: 'Kitchen 3.5 × 4', use: 'kitchen', size: [3.5, 4] },
+  { key: 'room-living', label: 'Living room 5 × 4.5', use: 'living', size: [5, 4.5] },
+  { key: 'room-dining', label: 'Dining room 4 × 3.5', use: 'dining', size: [4, 3.5] },
+  { key: 'room-office', label: 'Office 3 × 3', use: 'office', size: [3, 3] },
+  { key: 'room-laundry', label: 'Laundry 2 × 2', use: 'laundry', size: [2, 2] },
+  { key: 'room-storage', label: 'Storage 2 × 1.5', use: 'storage', size: [2, 1.5] },
+  { key: 'room-garage', label: 'Garage 3.5 × 6', use: 'garage', size: [3.5, 6] },
+  { key: 'room-pool', label: 'Pool 8 × 4', use: 'pool', size: [8, 4] },
+];
+
+/**
+ * Drops a room onto a level, centred on `at` and on the grid: a zone, a wall on
+ * each side that does not already have one, and a door in the first new wall.
+ * A pool gets no walls. The level's slab is left as it is.
+ */
+export function placeRoom(doc: SceneDoc, levelId: Id, key: string, at: Vec2): [SceneDoc, Id] {
+  const preset = ROOM_PRESETS.find(r => r.key === key), level = doc.nodes[levelId];
+  if (!preset) throw new SceneError(`There is no room ${key}`);
+  if (level?.type !== 'level') throw new SceneError('Choose a level to place it on');
+  const [w, d] = preset.size, x = snap(at[0] - w / 2), y = snap(at[1] - d / 2);
+  const P: Vec2[] = [[x, y], [x + w, y], [x + w, y + d], [x, y + d]];
+  let [next, zone] = addZone(doc, levelId, { name: preset.label.replace(/ [\d.]+ × [\d.]+$/, ''), use: preset.use, points: P });
+  if (preset.use === 'pool') return [next, zone];
+  const walls = level.children.map(c => doc.nodes[c]).filter((n): n is WallNode => n?.type === 'wall');
+  let door = false;
+  P.forEach((a, i) => {
+    const b = P[(i + 1) % 4];
+    if (wallAt([a[0], a[1]], [b[0], b[1]], walls)) return; // a wall is there already: the room shares it
+    let wall: Id;
+    [next, wall] = addWall(next, levelId, { a, b, thickness: 0.15, name: 'Wall' });
+    if (!door) {
+      try { [next] = addOpeningAt(next, wall, 'door', [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], preset.use === 'garage' ? { width: 2.5, height: 2.1 } : {}); door = true; }
+      catch (e) { if (!(e instanceof SceneError)) throw e; }
+    }
+  });
+  return [next, zone];
+}
+
+/** A copy of an item, half a metre along and across from it. */
+export function duplicateItem(doc: SceneDoc, id: Id): [SceneDoc, Id] {
+  const it = doc.nodes[id];
+  if (it?.type !== 'item') throw new SceneError('Choose an item to copy');
+  return addItem(doc, it.parent, { asset: it.asset, name: it.name, at: [it.at[0] + 0.5, it.at[1] + 0.5], turn: it.turn, size: it.size, parts: it.parts, models: it.models, tint: it.tint });
+}
+
+/** A top view of an asset, as SVG: its boxes from above, lowest first, to show in the library. */
+export function assetIcon(key: string): string {
+  const a = ASSETS.find(k => k.key === key);
+  if (!a) return '';
+  const it = a.make({ height: 3, tint: 0x6f8ba3 }), s = 40 / Math.max(it.w, it.dep), ox = (44 - it.w * s) / 2, oy = (44 - it.dep * s) / 2;
+  const hex = (c: number) => '#' + c.toString(16).padStart(6, '0');
+  const rects = [...it.parts].sort((p, q) => p[5] - q[5]).map(p => p[7] === 'cyl' || p[7] === 'ball'
+    ? `<ellipse cx="${(ox + (p[0] + p[1]) / 2 * s).toFixed(1)}" cy="${(oy + (p[2] + p[3]) / 2 * s).toFixed(1)}" rx="${((p[1] - p[0]) / 2 * s).toFixed(1)}" ry="${((p[3] - p[2]) / 2 * s).toFixed(1)}" fill="${hex(p[7] === 'ball' ? 0x5d8f5c : p[6])}"/>`
+    : `<rect x="${(ox + p[0] * s).toFixed(1)}" y="${(oy + p[2] * s).toFixed(1)}" width="${Math.max(0.6, (p[1] - p[0]) * s).toFixed(1)}" height="${Math.max(0.6, (p[3] - p[2]) * s).toFixed(1)}" fill="${p[7] === 'glass' ? '#bfe4f2' : hex(p[6])}"/>`).join('');
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 44 44" width="44" height="44">${rects}</svg>`;
 }

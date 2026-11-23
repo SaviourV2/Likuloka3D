@@ -636,6 +636,17 @@ export function addItem(doc: SceneDoc, levelId: Id, input: ItemInput, id = newId
   return [attach(doc, node), id];
 }
 
+/** Stretches an item to a new width or depth: its boxes and models are scaled with it. */
+export function resizeItem(doc: SceneDoc, id: Id, size: { width?: number; depth?: number }): SceneDoc {
+  const n = get(doc, id, 'item');
+  const w = size.width === undefined ? n.size[0] : positive(size.width, 'width', 0.1, 30), d = size.depth === undefined ? n.size[1] : positive(size.depth, 'depth', 0.1, 30);
+  if (w === n.size[0] && d === n.size[1]) return doc;
+  const kx = w / n.size[0], ky = d / n.size[1];
+  return put(doc, { ...n, size: [w, d],
+    parts: n.parts.map(p => [p[0] * kx, p[1] * kx, p[2] * ky, p[3] * ky, p[4], p[5], p[6], ...(p[7] ? [p[7]] : [])] as unknown as ItemPart),
+    models: n.models ? n.models.map(m => [m[0], m[1] * kx, m[2] * kx, m[3] * ky, m[4] * ky, m[5], m[6], ...(m[7] ? [m[7]] : [])] as unknown as ItemModel) : null });
+}
+
 export function updateItem(doc: SceneDoc, id: Id, patch: { name?: string; at?: Vec2; turn?: number }): SceneDoc {
   const n = get(doc, id, 'item');
   const at: Vec2 = patch.at ? [itemSnap(finite(patch.at[0], 'at[0]')), itemSnap(finite(patch.at[1], 'at[1]'))] : n.at;

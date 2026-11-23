@@ -1,13 +1,13 @@
 'use client';
 /** Properties of the selected node. Each field commits one undo step when it changes. */
 import { useEffect, useState } from 'react';
-import { addZone, area, updateItem, centreOnPlot, plotAround, removePlotCorner, rename, setPlot, updateSettings, setWallLength, updateLevel, updateOpening, updateSlab, updateWall, updateZone } from '@/scene/ops';
+import { addZone, area, resizeItem, updateItem, centreOnPlot, plotAround, removePlotCorner, rename, setPlot, updateSettings, setWallLength, updateLevel, updateOpening, updateSlab, updateWall, updateZone } from '@/scene/ops';
 import { commit, isClient, patchUnderlay, removeSelected, scaleUnderlay, setInteraction, setUnderlay, useEditor } from '@/scene/store';
 import { fromDxf, importDxf, parseDxf, PLOT_LAYER, ROOM_LAYER, type DxfChoice, type DxfDrawing, type DxfUnit } from '@/scene/dxfin';
 import { FLOOR_FINISHES, FLOOR_KEYS, PAINT_KEYS, TILE_KEYS, TILE_HEIGHTS, WALL_PAINTS, WALL_TILES, type WallPaint, type WallTile, ZONE_OPTIONS, type ZoneOption, type FloorFinish, FINISH_LABELS, frameSize, OPENING_FINISHES, ROOM_TYPES, type OpeningFinish, type OpeningNode, type RoomType, type SceneDoc, type SceneNode, type Vec2, type WallNode } from '@/scene/types';
 import { applyProduct, applyWallType, formatPrice, productFor, wallTypeFor } from '@/scene/catalogue';
 import { checks } from '@/scene/checks';
-import { ownFurniture } from '@/scene/assets';
+import { duplicateItem, ownFurniture } from '@/scene/assets';
 import { FINISH_SWATCH, USE_COLOURS } from '@/ecs/materials';
 
 /** A row of mutually exclusive choices that each commit one undo step. */
@@ -209,6 +209,9 @@ function Selected({ node, error }: { node: SceneNode; error: string | null }) {
               <button type="button" data-turn="15" title="15° clockwise" onClick={() => edit(d => updateItem(d, id, { turn: node.turn - 15 }), 'Turn item')}>↻ 15°</button>
             </div>
           </div>
+          <Mm label="Width" hint="Stretches the item across" value={node.size[0]} step={50} onCommit={v => edit(d => resizeItem(d, id, { width: v }), 'Resize item')} />
+          <Mm label="Depth" hint="Stretches the item back to front" value={node.size[1]} step={50} onCommit={v => edit(d => resizeItem(d, id, { depth: v }), 'Resize item')} />
+          <button type="button" className="add" data-action="item-copy" title="A copy beside it (Ctrl+D)" onClick={() => edit(d => duplicateItem(d, id)[0], 'Copy item')}>Copy</button>
           <dl className="measures" aria-label="Measurements">
             <dt>Size</dt><dd data-measure="item">{mm(node.size[0])} × {mm(node.size[1])} mm</dd>
             <dt>Turned</dt><dd data-measure="turn">{node.turn}°</dd>

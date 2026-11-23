@@ -1182,6 +1182,67 @@ async function drag(page, level, grab, by, lift = 0) {
     await c.close();
   }
 
+  // ---- drag and drop, room presets, copies, sizes, views, layouts -------------------------------
+  {
+    const { page: f, context: c, errors } = await open(browser, url);
+    const lv = await f.evaluate(() => { const d = likuloka.getDoc(); for (const r of d.roots.slice(1)) likuloka.commit(x => likuloka.ops.remove(x, r), 'rm'); const b = likuloka.getDoc().nodes[likuloka.getDoc().roots[0]]; for (const l of b.children.slice(1)) likuloka.commit(x => likuloka.ops.remove(x, l), 'rm'); const g = likuloka.getDoc().nodes[b.id].children[0]; likuloka.select(g); return g; });
+    await frames(f);
+    const kids = t => f.evaluate(([l, t2]) => { const d = likuloka.getDoc(); return d.nodes[l].children.map(k => d.nodes[k]).filter(n => n.type === t2); }, [lv, t]);
+    // an asset dragged from the library onto the floor lands where it is dropped
+    await f.selectOption('.assets select[aria-label="Asset group"]', 'Kitchen and dining');
+    ok('the library has a stove, a fridge and a sink, each with a picture', (await f.locator('[data-asset="stove"] svg rect').count()) > 0 && (await f.locator('[data-asset="fridge"]').count()) === 1 && (await f.locator('[data-asset="kitchen-sink"]').count()) === 1);
+    const target = await f.evaluate(l => likuloka.project(l, 3, 2, 0), lv);
+    const drop = async (sel, at) => {
+      const data = await f.evaluateHandle(() => new DataTransfer());
+      await f.dispatchEvent(sel, 'dragstart', { dataTransfer: data });
+      await f.dispatchEvent('.stage', 'dragover', { dataTransfer: data, clientX: at.x, clientY: at.y });
+      await f.dispatchEvent('.stage', 'drop', { dataTransfer: data, clientX: at.x, clientY: at.y });
+      await frames(f);
+    };
+    await drop('[data-asset="stove"]', target);
+    const stove = (await kids('item')).find(i => i.asset === 'stove');
+    ok('an asset dragged onto the floor lands where it is dropped, selected', stove && Math.abs(stove.at[0] - 3) < 0.06 && Math.abs(stove.at[1] - 2) < 0.06 && (await state(f)).selection === stove.id, stove && stove.at);
+    // copy and resize
+    await f.keyboard.press('Control+d');
+    const two = (await kids('item')).filter(i => i.asset === 'stove');
+    ok('Ctrl+D copies the selected item beside it and selects the copy', two.length === 2 && two[1].at[0] === two[0].at[0] + 0.5 && (await state(f)).selection === two[1].id, two.map(i => i.at));
+    await f.fill('.inspector input[aria-label="Width"]', '900');
+    await f.keyboard.press('Enter');
+    const wide = (await kids('item')).find(i => i.id === two[1].id);
+    ok('an item\u2019s width stretches its boxes with it', wide.size[0] === 0.9 && Math.abs(Math.max(...wide.parts.map(p => p[1])) - 0.9) < 1e-9 && wide.size[1] === two[1].size[1], wide.size);
+    // a room dropped beside the house brings walls and a door; one dropped against a wall shares it
+    const walls0 = (await kids('wall')).length, right = Math.max(...(await kids('wall')).flatMap(w => [w.a[0], w.b[0]])), top = Math.min(...(await kids('wall')).flatMap(w => [w.a[1], w.b[1]]));
+    await f.selectOption('.assets select[aria-label="Asset group"]', 'Rooms');
+    const made = await f.evaluate(([l, x, y]) => likuloka.dropAsset(l, 'room-bedroom', [x + 4 + 1.75, y + 2]), [lv, right, top]);
+    const far = await kids('wall');
+    const zone = (await kids('zone')).find(z => z.name === 'Bedroom' && z.points.some(p => p[0] > right + 3));
+    ok('a room dropped on open ground brings four walls and a door', made && zone && far.length === walls0 + 4 && far.slice(-4).some(w => w.children.length === 1) && zone.points.every(p => p.every(v => Math.abs(v * 4 - Math.round(v * 4)) < 1e-9)), { n: far.length - walls0 });
+    await f.evaluate(([l, x, y]) => likuloka.dropAsset(l, 'room-bathroom', [x + 1, y + 1.25]), [lv, right, top]);
+    ok('a room dropped against a wall shares that wall', (await kids('wall')).length === far.length + 3, (await kids('wall')).length - far.length);
+    await f.evaluate(l => likuloka.select(l), lv);
+    const rp = await f.evaluate(l => likuloka.project(l, -4, 2, 0), lv);
+    await drop('[data-asset="room-storage"]', rp);
+    ok('a room can be dragged from the library onto the ground', (await kids('zone')).some(z => z.use === 'storage'));
+    // views
+    await f.click('[data-view="top"]');
+    await frames(f);
+    const topView = await f.evaluate(l => { const a = likuloka.project(l, 0, 0, 0), b = likuloka.project(l, 0, 0, 3); return Math.hypot(a.x - b.x, a.y - b.y); }, lv);
+    await f.click('[data-view="front"]');
+    await frames(f);
+    const frontView = await f.evaluate(l => { const a = likuloka.project(l, 0, 0, 0), b = likuloka.project(l, 0, 0, 3); return Math.hypot(a.x - b.x, a.y - b.y); }, lv);
+    ok('Top looks down and Front looks from the side', topView < frontView / 3 && frontView > 40, { topView, frontView });
+    await f.click('[data-view="3d"]');
+    // layouts as starting points
+    await f.click('.menu > summary'); await f.click('.menu-items [data-action="project"]');
+    f.once('dialog', d => d.accept());
+    await f.click('[data-action="layout-2"]');
+    await frames(f);
+    const started = await f.evaluate(() => { const d = likuloka.getDoc(), l = d.nodes[d.nodes[d.roots[0]].children[0]], k = l.children.map(c => d.nodes[c]); return { roots: d.roots.length, zones: k.filter(n => n.type === 'zone').length, doors: k.filter(n => n.type === 'wall').flatMap(w => w.children).length, noDoor: likuloka.checks().filter(i => i.rule === 'no-door').length }; });
+    ok('a project can start from a built-in layout', started.roots === 1 && started.zones === 6 && started.doors >= 8 && started.noDoor === 0, started);
+    ok('no page errors with drag and drop', errors.length === 0, errors.slice(0, 5));
+    await c.close();
+  }
+
   // ---- glass and the grid ---------------------------------------------------------------------
   {
     const { page: g, context: c, errors } = await open(browser, url);

@@ -504,3 +504,12 @@ kbd { background: rgba(111, 208, 255, .1); color: var(--accent); box-shadow: ins
 }
 .asset-list button:hover:not(:disabled) { background: var(--field-strong); box-shadow: var(--accent-glow); color: #fff; }
 .dot-item { background: #c9a77a; border-radius: 2px; }
+
+/* Asset buttons carry a small top view; the status line has the view switch. */
+.asset-list button { display: grid; grid-template-columns: 30px 1fr; gap: 8px; align-items: center; cursor: grab; }
+.asset-list button i { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 6px; background: rgba(255, 255, 255, .06); overflow: hidden; }
+.asset-list button i svg { width: 28px; height: 28px; }
+.asset-list button i.room-icon { width: auto; max-width: 30px; height: auto; max-height: 30px; min-height: 12px; background: var(--accent-soft); box-shadow: inset 0 0 0 1.5px var(--accent); border-radius: 3px; justify-self: center; }
+.views { display: inline-flex; gap: 2px; margin-left: auto; }
+.views button { border: 0; background: var(--field); color: var(--ink); font: 600 11px var(--font-data); padding: 3px 8px; border-radius: 6px; cursor: pointer; }
+.views button:hover { background: var(--field-strong); color: #fff; }

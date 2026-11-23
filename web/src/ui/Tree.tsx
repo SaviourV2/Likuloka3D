@@ -6,8 +6,9 @@
  */
 import { addLevelAbove, ancestor } from '@/scene/ops';
 import { useState } from 'react';
-import { commit, select, setTool, setView, useEditor } from '@/scene/store';
-import { ASSETS, ASSET_GROUPS, placeAsset, type AssetGroup } from '@/scene/assets';
+import { commit, editor, select, setView, useEditor } from '@/scene/store';
+import { assetIcon, ASSETS, ASSET_GROUPS, ROOM_PRESETS, type AssetGroup } from '@/scene/assets';
+import { DROP_TYPE, dropAsset } from './drop';
 import type { Id, LevelMode, SceneNode } from '@/scene/types';
 import { rig } from '@/render/interact';
 
@@ -107,7 +108,7 @@ function Building({ id }: { id: Id }) {
  */
 function Assets() {
   const client = useEditor(s => s.role.kind === 'client');
-  const [group, setGroup] = useState<AssetGroup>('Decor');
+  const [group, setGroup] = useState<AssetGroup | 'Rooms'>('Decor');
   const where = useEditor(s => {
     const n = s.selection ? s.doc.nodes[s.selection] : undefined;
     const level = n?.type === 'level' ? n.id : n && n.type !== 'building' ? ancestor(s.doc, n.id, 'level')?.id : undefined;
@@ -116,24 +117,35 @@ function Assets() {
   const target = useEditor(s => { const [l, z] = where.split('|'); const zn = s.doc.nodes[z], ln = s.doc.nodes[l]; return zn ? zn.name : ln ? ln.name : ''; });
   if (client) return null;
   const [level, zone] = where.split('|');
+  // a press puts an asset in the middle of the room or level; a room goes beside what is drawn
   const place = (key: string) => {
-    let made: Id | null = null;
-    const ok = commit(d => { const [next, id] = placeAsset(d, level, key, zone ? { zone } : {}); made = id; return next; }, 'Place item');
-    if (ok && made) { setTool('select'); select(made); }
-    rig.invalidate();
+    if (!ROOM_PRESETS.some(r => r.key === key)) { dropAsset(level, key, undefined, zone || undefined); return; }
+    const s = editor.getState(), l = s.doc.nodes[level];
+    const pts = l?.type === 'level' ? l.children.flatMap(c => { const n = s.doc.nodes[c]; return n?.type === 'wall' ? [n.a, n.b] : n?.type === 'zone' ? [...n.points] : []; }) : [];
+    const size = ROOM_PRESETS.find(r => r.key === key)!.size;
+    dropAsset(level, key, pts.length ? [Math.max(...pts.map(p => p[0])) + size[0] / 2, Math.min(...pts.map(p => p[1])) + size[1] / 2] : [size[0] / 2, size[1] / 2]);
   };
+  const drag = (key: string) => (e: React.DragEvent) => { e.dataTransfer.setData(DROP_TYPE, key); e.dataTransfer.effectAllowed = 'copy'; };
   return (
     <section className="assets" aria-label="Assets">
       <h2>Assets</h2>
-      <select value={group} aria-label="Asset group" onChange={e => setGroup(e.target.value as AssetGroup)}>
+      <select value={group} aria-label="Asset group" onChange={e => setGroup(e.target.value as AssetGroup | 'Rooms')}>
+        <option value="Rooms">Rooms</option>
         {ASSET_GROUPS.map(g => <option key={g} value={g}>{g}</option>)}
       </select>
       <div className="asset-list">
+        {group === 'Rooms' && ROOM_PRESETS.map(r => (
+          <button key={r.key} type="button" data-asset={r.key} disabled={!level} draggable onDragStart={drag(r.key)} title="Drag onto the floor, or press to put it beside what is drawn" onClick={() => place(r.key)}>
+            <i className="room-icon" style={{ aspectRatio: `${r.size[0]} / ${r.size[1]}` }} aria-hidden="true" />{r.label}
+          </button>
+        ))}
         {ASSETS.filter(a => a.group === group).map(a => (
-          <button key={a.key} type="button" data-asset={a.key} disabled={!level} title={`Place in ${target || 'the level'}`} onClick={() => place(a.key)}>{a.label}</button>
+          <button key={a.key} type="button" data-asset={a.key} disabled={!level} draggable onDragStart={drag(a.key)} title={`Drag onto the floor, or press to place in ${target || 'the level'}`} onClick={() => place(a.key)}>
+            <i aria-hidden="true" dangerouslySetInnerHTML={{ __html: assetIcon(a.key) }} />{a.label}
+          </button>
         ))}
       </div>
-      <p className="hint">{level ? `Goes in the middle of ${target}. Drag it into place, and turn it in the inspector.` : 'Add a level first.'}</p>
+      <p className="hint">{level ? `Drag one onto the floor, or press it to put it in ${target}. A room brings its walls and a door.` : 'Add a level first.'}</p>
     </section>
   );
 }

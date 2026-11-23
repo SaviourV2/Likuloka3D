@@ -12,7 +12,7 @@ import { editor, isUnsaved, useEditor } from '@/scene/store';
 import { GRID, type SceneDoc } from '@/scene/types';
 import { furniture } from '@/ecs/furniture';
 import { world } from '@/ecs/world';
-import { endChain, rig } from '@/render/interact';
+import { endChain, planAt, rig } from '@/render/interact';
 import Tree from './Tree';
 import Inspector from './Inspector';
 import { ChecksDialog, CloudDialog, DrawingsDialog, ProjectDialog, ScheduleDialog, VersionsDialog, download } from './Dialogs';
@@ -23,7 +23,8 @@ import { dxfFile } from '@/scene/dxf';
 import { rememberedName } from '@/scene/versions';
 import { checks } from '@/scene/checks';
 import { furnishLevel, wallSkins } from '@/scene/furnish';
-import { ASSETS, ownFurniture, placeAsset } from '@/scene/assets';
+import { ASSETS, duplicateItem, ownFurniture, placeAsset, ROOM_PRESETS } from '@/scene/assets';
+import { DROP_TYPE, dropAsset } from './drop';
 import { fromDxf, importDxf, parseDxf } from '@/scene/dxfin';
 import { compare, versionStore } from '@/scene/versions';
 
@@ -218,6 +219,12 @@ function Status({ onChecks }: { onChecks: () => void }) {
       <CheckCount onOpen={onChecks} />
       <span data-grid={GRID} title="The fine lines on the ground are 0.25 m apart, the brighter ones 1 m and 5 m">Grid {GRID * 100} cm</span>
       <span>{steps} undo step{steps === 1 ? '' : 's'}</span>
+      <span className="views" role="group" aria-label="View from">
+        {([['3d', '3D'], ['top', 'Top'], ['front', 'Front'], ['side', 'Side']] as const).map(([k, label]) => (
+          <button key={k} type="button" data-view={k} title={k === '3d' ? 'The three-quarter view' : `Look at everything from the ${k}`}
+            onClick={() => import('@/render/Viewport').then(m => m.frame(editor.getState().doc, k === '3d' ? undefined : k))}>{label}</button>
+        ))}
+      </span>
       {last && <span>{last}</span>}
     </footer>
   );
@@ -284,6 +291,7 @@ export default function Editor() {
       if (mod && k === 's') { e.preventDefault(); (document.activeElement as HTMLElement | null)?.blur?.(); void cloud.save(); return; }
       const t = e.target as HTMLElement;
       if (t.closest('input, textarea, select, dialog')) return;
+      if (mod && k === 'd') { const sel = editor.getState().selection; if (sel && editor.getState().doc.nodes[sel]?.type === 'item') { e.preventDefault(); let made: string | null = null; if (store.commit(d => { const [n, id] = duplicateItem(d, sel); made = id; return n; }, 'Copy item') && made) store.select(made); rig.invalidate(); } return; }
       if (mod && k === 'z') { e.preventDefault(); if (e.shiftKey) store.redo(); else store.undo(); }
       else if (mod && k === 'y') { e.preventDefault(); store.redo(); }
       else if (mod) return;
@@ -337,6 +345,8 @@ export default function Editor() {
       scaleUnderlay: store.scaleUnderlay,
       parseDxf, fromDxf, importDxf,
       assets: () => ASSETS.map(a => a.key),
+      rooms: () => ROOM_PRESETS.map(r => r.key),
+      dropAsset,
       placeAsset: (level: string, key: string, where?: { at?: [number, number]; zone?: string }) => store.commit(d => placeAsset(d, level, key, where)[0], 'Place item'),
       ownFurniture: (zone: string) => store.commit(d => ownFurniture(d, zone)[0], 'Make furniture editable'),
       furniture: () => ({ files: furniture.models, ...furniture.stats }),
@@ -432,7 +442,15 @@ export default function Editor() {
         ['checks', 'Checks…', () => { setChecksOpen(true); checksDialog.current?.showModal(); }],
       ]} />
       <Tree />
-      <main className="stage">
+      <main className="stage" data-drop
+        onDragOver={e => { if (e.dataTransfer.types.includes(DROP_TYPE)) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; } }}
+        onDrop={e => {
+          const key = e.dataTransfer.getData(DROP_TYPE), s = editor.getState();
+          if (!key || !s.activeLevel || s.role.kind === 'client') return;
+          e.preventDefault();
+          const at = planAt(s.doc, s.activeLevel, e.clientX, e.clientY);
+          if (at) dropAsset(s.activeLevel, key, at);
+        }}>
         {ready && <Viewport />}
       </main>
       <Inspector />

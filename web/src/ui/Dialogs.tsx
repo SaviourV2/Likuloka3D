@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import * as ops from '@/scene/ops';
 import * as projects from '@/scene/projects';
-import { importRoomlines, type RoomlinesPlan } from '@/scene/roomlines';
+import { importRoomlines, LAYOUTS, type RoomlinesPlan } from '@/scene/roomlines';
 import { schedule, scheduleCsv, totals, types } from '@/scene/schedule';
 import { formatPrice } from '@/scene/catalogue';
 import { checks } from '@/scene/checks';
@@ -102,6 +102,10 @@ function ProjectBody({ dialog, importDialog, sample, okToDiscard }: { dialog: Di
         <RoleSwitch />
         <button type="button" data-action="new-blank" onClick={() => { if (okToDiscard()) after(projects.newProject(projects.blankScene())); }}>New blank project</button>
         <button type="button" data-action="new-sample" onClick={() => { if (okToDiscard()) after(projects.newProject(sample())); }}>New from the sample</button>
+        {LAYOUTS.map((plan, i) => (
+          <button key={plan.name} type="button" data-action={`layout-${i}`} title="A new project with this layout: rooms, walls, doors, windows and furniture"
+            onClick={() => { if (okToDiscard()) after(projects.newProject(importRoomlines(ops.emptyDoc(plan.name), plan, { openings: true })[0])); }}>New: {plan.name}</button>
+        ))}
         <button type="button" data-action="import" onClick={() => { close(); importDialog.current?.showModal(); }}>Import a Roomlines plan…</button>
       </div>
       {error && <p className="error" role="alert">{error}</p>}

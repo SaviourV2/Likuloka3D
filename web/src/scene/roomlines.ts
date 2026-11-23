@@ -371,3 +371,11 @@ export const SAMPLE: RoomlinesPlan = {
     { name: 'Office', type: 'office', x: 9.5, y: 4.25, w: 1.5, h: 3.5 },
   ],
 };
+
+/** Roomlines' four built-in layouts, to start a project from. */
+export const LAYOUTS = [
+  { name: 'Studio', width: 6, depth: 5.5, layout: { dir: 'col', children: [{ size: 3.5, name: 'Studio room', type: 'studio' }, { size: 2, dir: 'row', children: [{ size: 2.75, name: 'Kitchen', type: 'kitchen' }, { size: 1.5, name: 'Entry', type: 'hallway' }, { size: 1.75, name: 'Bathroom', type: 'bathroom' }] }] } },
+  { name: 'One bedroom', width: 8, depth: 6.5, layout: { dir: 'row', children: [{ size: 4.75, dir: 'col', children: [{ size: 4.5, name: 'Living room', type: 'living' }, { size: 2, name: 'Kitchen', type: 'kitchen' }] }, { size: 3.25, dir: 'col', children: [{ size: 3.5, name: 'Bedroom', type: 'bedroom' }, { size: 1.25, name: 'Hallway', type: 'hallway' }, { size: 1.75, name: 'Bathroom', type: 'bathroom' }] }] } },
+  { name: 'Two bedroom', width: 10, depth: 7.75, layout: { dir: 'row', children: [{ size: 5.5, dir: 'col', children: [{ size: 4.5, name: 'Living room', type: 'living' }, { size: 3.25, name: 'Kitchen', type: 'kitchen' }] }, { size: 1.25, name: 'Hallway', type: 'hallway' }, { size: 3.25, dir: 'col', children: [{ size: 3.25, name: 'Main bedroom', type: 'bedroom' }, { size: 1.75, name: 'Bathroom', type: 'bathroom' }, { size: 2.75, name: 'Bedroom 2', type: 'bedroom' }] }] } },
+  { name: 'Family house', width: 12, depth: 10, layout: { dir: 'row', children: [{ size: 6.5, dir: 'col', children: [{ size: 5.5, name: 'Living room', type: 'living' }, { size: 4.5, dir: 'row', children: [{ size: 3.75, name: 'Kitchen', type: 'kitchen' }, { size: 2.75, name: 'Dining room', type: 'dining' }] }] }, { size: 1.5, name: 'Hallway', type: 'hallway' }, { size: 4, dir: 'col', children: [{ size: 3.5, name: 'Main bedroom', type: 'bedroom' }, { size: 1.75, name: 'Bathroom', type: 'bathroom' }, { size: 2.5, name: 'Bedroom 2', type: 'bedroom' }, { size: 2.25, name: 'Office', type: 'office' }] }] } },
+] as unknown as RoomlinesPlan[];
