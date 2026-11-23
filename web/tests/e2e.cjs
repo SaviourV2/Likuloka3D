@@ -16,7 +16,7 @@ const fs = require('fs');
 const path = require('path');
 
 const ROOT = path.join(__dirname, '..', 'out');
-const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.txt': 'text/plain', '.glb': 'model/gltf-binary', '.json': 'application/json', '.svg': 'image/svg+xml', '.ico': 'image/x-icon' };
+const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.txt': 'text/plain', '.glb': 'model/gltf-binary', '.mjs': 'text/javascript', '.json': 'application/json', '.svg': 'image/svg+xml', '.ico': 'image/x-icon' };
 let passed = 0, failed = 0;
 
 function ok(name, cond, detail) {
@@ -1036,6 +1036,13 @@ async function drag(page, level, grab, by, lift = 0) {
     await f.keyboard.press('t');
     await f.click('[data-action="trace-remove"]');
     ok('the drawing can be removed', (await f.evaluate(() => likuloka.underlay())) === null);
+    // a PDF: its first page becomes the picture
+    await f.keyboard.press('t');
+    await f.setInputFiles('[data-action="trace-file"]', fixture('plan.pdf'));
+    await f.waitForFunction(() => likuloka.underlay() && likuloka.underlay().kind === 'image', null, { timeout: 30000 }).catch(() => {});
+    const pdf = await f.evaluate(() => { const u = likuloka.underlay(); return u && { kind: u.kind, aspect: Math.round(u.aspect * 100) / 100, jpeg: u.url.startsWith('data:image/jpeg'), said: document.querySelector('[data-trace-said]').textContent }; });
+    ok('the first page of a PDF is laid on the ground as a picture', pdf && pdf.kind === 'image' && pdf.aspect === 1.33 && pdf.jpeg && /first page/.test(pdf.said), pdf);
+    await f.click('[data-action="trace-remove"]');
     // a door is set out from either end of its wall
     const door = await f.evaluate(() => { const d = likuloka.getDoc(), o = Object.values(d.nodes).find(n => n.type === 'opening' && n.kind === 'door'), w = d.nodes[o.parent]; likuloka.setTool('select'); likuloka.select(o.id); return { id: o.id, len: Math.hypot(w.b[0] - w.a[0], w.b[1] - w.a[1]), width: o.width }; });
     await f.fill('.inspector input[aria-label="To wall end"]', '6000');

@@ -367,9 +367,25 @@ function readPicture(file: File): Promise<{ url: string; aspect: number }> {
       g.drawImage(img, 0, 0, canvas.width, canvas.height);
       resolve({ url: canvas.toDataURL('image/jpeg', 0.85), aspect: canvas.width / canvas.height });
     };
-    img.onerror = () => { URL.revokeObjectURL(src); reject(new Error('That file is not a picture this browser can open. Use PNG or JPG; for a PDF, save the page as a picture first.')); };
+    img.onerror = () => { URL.revokeObjectURL(src); reject(new Error('That file is not a picture this browser can open. Use PNG, JPG or PDF.')); };
     img.src = src;
   });
+}
+
+/** Draws the first page of a PDF as a picture, at most 2400 px on its long side. pdf.js is loaded only when a PDF is chosen. */
+async function readPdf(file: File): Promise<{ url: string; aspect: number; pages: number }> {
+  const pdfjs = await import('pdfjs-dist');
+  pdfjs.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url).toString();
+  const pdf = await pdfjs.getDocument({ data: await file.arrayBuffer() }).promise;
+  const page = await pdf.getPage(1), base = page.getViewport({ scale: 1 });
+  const viewport = page.getViewport({ scale: Math.min(4, 2400 / Math.max(base.width, base.height)) });
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(viewport.width); canvas.height = Math.round(viewport.height);
+  const g = canvas.getContext('2d');
+  if (!g) throw new Error('This browser cannot draw the PDF.');
+  g.fillStyle = '#fff'; g.fillRect(0, 0, canvas.width, canvas.height);
+  await page.render({ canvasContext: g, viewport, canvas }).promise;
+  return { url: canvas.toDataURL('image/jpeg', 0.85), aspect: canvas.width / canvas.height, pages: pdf.numPages };
 }
 
 /**
@@ -394,11 +410,12 @@ function TracePanel({ error }: { error: string | null }) {
         setDrawing(d);
         setChoice({ unit: d.unit, plot: closed.find(l => PLOT_LAYER.test(l.name))?.name ?? null, rooms: closed.find(l => ROOM_LAYER.test(l.name) && !PLOT_LAYER.test(l.name))?.name ?? null });
       } else {
-        const p = await readPicture(file);
+        const pdf = /\.pdf$/i.test(file.name) || file.type === 'application/pdf';
+        const got = pdf ? await readPdf(file) : { ...(await readPicture(file)), pages: 1 };
         setDrawing(null);
-        setUnderlay({ kind: 'image', ...p, at: [0, 0], width: 20, opacity: 0.45, shown: true });
+        setUnderlay({ kind: 'image', url: got.url, aspect: got.aspect, at: [0, 0], width: 20, opacity: 0.45, shown: true });
         rig.invalidate();
-        setSaid({ text: 'The picture is on the ground, 20 m wide for now. Give it its true size from a length you know, then drag it into place.' });
+        setSaid({ text: `${pdf ? `The first page${got.pages > 1 ? ` of ${got.pages}` : ''} of the PDF` : 'The picture'} is on the ground, 20 m wide for now. Give it its true size from a length you know, then drag it into place.` });
       }
     } catch (e) { setSaid({ text: e instanceof Error ? e.message : 'That file could not be read.', bad: true }); }
   };
@@ -418,8 +435,8 @@ function TracePanel({ error }: { error: string | null }) {
   return (
     <aside className="inspector" aria-label="Inspector" data-type="trace">
       <h2>Trace a drawing</h2>
-      <p className="hint">A picture (PNG or JPG) is laid on the ground to draw over. A DXF file from AutoCAD is read exactly: its plot and room outlines come in at their real sizes.</p>
-      <label className="file-button">Choose a picture or DXF file…<input type="file" accept="image/png,image/jpeg,image/webp,.dxf" data-action="trace-file" onChange={e => { void open(e.target.files?.[0]); e.target.value = ''; }} /></label>
+      <p className="hint">A picture (PNG or JPG) or the first page of a PDF is laid on the ground to draw over. A DXF file from AutoCAD is read exactly: its plot and room outlines come in at their real sizes.</p>
+      <label className="file-button">Choose a picture, PDF or DXF file…<input type="file" accept="image/png,image/jpeg,image/webp,application/pdf,.pdf,.dxf" data-action="trace-file" onChange={e => { void open(e.target.files?.[0]); e.target.value = ''; }} /></label>
       {said && <p className={said.bad ? 'error' : 'notice'} role="status" data-trace-said>{said.text}</p>}
       {drawing && (
         <div className="fields" data-trace="dxf">
